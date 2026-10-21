@@ -24,8 +24,11 @@ interface FbxAsset extends THREE.Group {
   animations: THREE.AnimationClip[];
 }
 
-const MODEL_BASE = '/assets/models';
-const WEAPON_BASE = '/assets/weapons';
+// Relative Pfade: auf GitHub Pages liegt die App unter /formation-battle-3d/,
+// absolute Pfade wie /assets/... würden dort ins Leere laufen.
+const BASE = import.meta.env.BASE_URL;
+const MODEL_BASE = `${BASE}assets/models`;
+const WEAPON_BASE = `${BASE}assets/weapons`;
 
 const CHARACTERS: ReadonlyArray<{ key: string; file: string }> = [
   { key: 'knight', file: 'Knight' },

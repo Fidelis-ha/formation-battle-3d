@@ -70,14 +70,18 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x0d0e13);
-  scene.fog = new THREE.FogExp2(0x0d0e13, 0.0035);
+  // Gemessen am Original (v0.1.1-Screenshot): der Boden fuellt das ganze Bild,
+  // es gibt keinen schwarzen Himmelsstreifen. Hintergrund und Nebel nehmen
+  // deshalb die Bodenfarbe an, statt fast schwarz zu sein.
+  const HORIZON = 0x8ba0ac;
+  scene.background = new THREE.Color(HORIZON);
+  scene.fog = new THREE.FogExp2(HORIZON, 0.0022);
 
-  const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 500);
+  const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 900);
   camera.position.set(0, 9, 60);
   camera.lookAt(0, 0, 20);
 
-  const sun = new THREE.DirectionalLight(0xffffff, 2.2);
+  const sun = new THREE.DirectionalLight(0xfff6e8, 2.15);
   sun.position.set(40, 60, 24);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
@@ -92,12 +96,13 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
   scene.add(sun);
   scene.add(sun.target);
 
-  const ambient = new THREE.AmbientLight(0xffffff, 0.35);
+  const ambient = new THREE.AmbientLight(0xdfe8ea, 0.62);
   scene.add(ambient);
 
   const ground = new THREE.Mesh(
-    new THREE.PlaneGeometry(140, 140),
-    new THREE.MeshStandardMaterial({ color: 0x7a7d76, roughness: 1, metalness: 0 }),
+    // Sehr grosse Flaeche, damit der Horizont ausserhalb des Bildes liegt.
+    new THREE.PlaneGeometry(1600, 1600),
+    new THREE.MeshStandardMaterial({ color: 0x8ba0ac, roughness: 1, metalness: 0 }),
   );
   ground.rotation.x = -Math.PI / 2;
   ground.receiveShadow = true;

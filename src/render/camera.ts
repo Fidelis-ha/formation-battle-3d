@@ -10,11 +10,17 @@ export interface CameraRig {
   readonly target: THREE.Vector3;
 }
 
-const MIN_DISTANCE = 10;
-const MAX_DISTANCE = 40;
+const MIN_DISTANCE = 30;
+const MAX_DISTANCE = 110;
 const MOVE_SPEED = 12;
 const PAN_FACTOR = 0.05;
 const WORLD_LIMIT = 60;
+// Das Original zeigt das GESAMTE Schlachtfeld im Bild: beide Armeen bei z=+-38
+// passen komplett hinein, darueber liegt nur ein schmaler Bodenstreifen.
+// Daraus folgt: deutlich groesserer Abstand und flacherer Winkel als bei einer
+// Nahansicht hinter den eigenen Truppen.
+const DEFAULT_PITCH = THREE.MathUtils.degToRad(34);
+const DEFAULT_DISTANCE = 92;
 
 function clamp(value: number, min: number, max: number): number {
   return value < min ? min : value > max ? max : value;
@@ -27,15 +33,13 @@ export function createCameraRig(
   camera.fov = 45;
   camera.updateProjectionMatrix();
 
-  // Startpunkt nah hinter den eigenen Truppen (z=38), Blick in Richtung Gegner.
-  // Niedrige Neigung (~23 Grad) wie im Original: die eigene Formation steht im
-  // unteren Bilddrittel, der Horizont liegt knapp unter dem oberen Rand.
-  const target = new THREE.Vector3(0, 0, 24);
-  const startOffset = new THREE.Vector3(0, 11, 26);
-  let distance = clamp(startOffset.length(), MIN_DISTANCE, MAX_DISTANCE);
+  // Blick auf die Feldmitte (0,0): beide Armeen stehen bei z=+-38 und sind
+  // vollstaendig im Bild.
+  const target = new THREE.Vector3(0, 0, 2);
+  let distance = DEFAULT_DISTANCE;
   let goalDistance = distance;
-  let pitch = Math.atan2(startOffset.y, Math.hypot(startOffset.x, startOffset.z));
-  let yaw = Math.atan2(startOffset.x, startOffset.z);
+  let pitch = DEFAULT_PITCH;
+  let yaw = 0;
 
   let panning = false;
   let lastX = 0;

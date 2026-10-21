@@ -81,3 +81,53 @@ WebGL-Build den Prüfbrowser blockiert (siehe unten).
 4. Kamera-Neigung und Blickwinkel sind nachjustierbar, aber nicht gegen das laufende
    Original verifizierbar
 5. Waffen-Meshes könnten in die Figur eingerechnet werden (Draw-Call-Reduktion)
+
+## Messung 21.10.2026: Bodenfarbe und Kamera
+
+Statt zu schätzen wurde der Boden pixelweise verglichen (Median über mehrere
+Bildbereiche, beide Bilder auf 960×540 gebracht).
+
+| Messpunkt | Original (`v011-capture.png`) | Nachbau |
+|---|---|---|
+| Bildmitte | `#78878b` | `#77868a` |
+| Fernbereich | `#78878b` | `#78878a` |
+| Oberer Rand | `#788688` | `#7b8a8f` |
+| Mittlere Helligkeit | 100,9 | 114,5 |
+
+Ergebnis: Die Bodenfarbe trifft auf 1–2 Farbstufen genau. Die mittlere
+Helligkeit liegt 13 % höher, weil im Nachbau mehr Figuren im Bild stehen.
+
+**Wichtige Korrektur:** Der erste Stand hatte einen fast schwarzen Himmel
+(`#0d0e13`) und einen dunkleren, wärmeren Boden (`#676a64`). Das war falsch.
+Am Original gemessen füllt der Boden das **gesamte** Bild — es gibt keinen
+Himmelsstreifen. Hintergrund und Nebel tragen jetzt dieselbe Bodenfarbe,
+die Bodenfläche ist 1600×1600 statt 140×140, damit der Horizont außerhalb
+des Bildes liegt.
+
+**Kamera:** Ebenfalls korrigiert. Vorher stand die Kamera nah hinter den
+eigenen Truppen (Abstand 28, Neigung 23°), die eigenen Formationen liefen
+unten aus dem Bild. Am Original gemessen ist das gesamte Schlachtfeld zu
+sehen: Abstand 92, Neigung 34°, Blick auf die Feldmitte. Beide Armeen
+(z = ±38) sind vollständig im Bild, darüber bleibt ein breiter leerer
+Bodenstreifen.
+
+## Was weiterhin offen ist
+
+Die Figuren selbst. Das Original zeigt Soldaten mit Schilden, Helmen,
+Federbüschen und geviertelten Bannern in einem sehr eigenen Stil (Synty
+POLYGON). Der Nachbau zeigt CC0-Figuren ohne Schild- und Banner-Details.
+Ein Bildvergleich auf Figurenebene ist deshalb nicht sinnvoll, solange die
+Assets nicht getauscht sind.
+
+## Versuchte, gescheiterte Wege (nicht wiederholen)
+
+- **Werte aus dem Unity-Build extrahieren.** `data.unity3d` ließ sich
+  entpacken (UnityFS v8, LZ4, 850 Blöcke, 6 Knoten). `level0` enthält alle
+  UI-Texte im Klartext, aber die Zahlenwerte der Einheiten liegen nicht als
+  lesbare Floats vor — die Suche nach der belegten Cavalry-Kombination
+  (15 / 120 / 5,5 / 20) fand nichts. Il2Cpp-Code liegt im WASM, die
+  Metadaten sind ohne vollständigen TypeTree nicht zuzuordnen.
+  Aufwand für den Rest: hoch, Erfolg ungewiss.
+- **Weitere Referenzbilder für Einheitenwerte.** `cover-2.png` und
+  `shot-page2.png` zeigen reine Szenen ohne UI. Nur
+  `unit-types-panel.png` enthält Werte, und zwar für Cavalry.

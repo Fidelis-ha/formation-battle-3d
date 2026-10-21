@@ -3,6 +3,7 @@ import type { Battle, BattleEvent, Soldier } from '../sim/types';
 import type { Assets } from './assets';
 import { createSoldierVisual, playAction, type SoldierVisual } from './character';
 import type { SceneHandle } from './scene';
+import { heightAt } from '../sim/terrain';
 
 export interface BattleView {
   update(dt: number, events: BattleEvent[]): void;
@@ -220,7 +221,7 @@ export function createBattleView(
         const visual = visuals.get(soldier.id);
         if (!visual) continue;
 
-        visual.root.position.set(soldier.x, 0, soldier.z);
+        visual.root.position.set(soldier.x, heightAt(soldier.x, soldier.z), soldier.z);
         visual.root.rotation.y = soldier.facing;
 
         const hidden = soldier.state === 'dead' && soldier.deadTime > CORPSE_LIFE;

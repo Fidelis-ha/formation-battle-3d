@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { buildLandscape, type LandscapeHandle } from './landscape';
 
 export interface SceneHandle {
   renderer: THREE.WebGLRenderer;
@@ -6,60 +7,8 @@ export interface SceneHandle {
   camera: THREE.PerspectiveCamera;
   sun: THREE.DirectionalLight;
   ground: THREE.Mesh;
-}
-
-function createGrass(scene: THREE.Scene): void {
-  const tufts = 40;
-  const bladesPerTuft = 3;
-  const geometry = new THREE.ConeGeometry(0.12, 0.55, 4);
-  const material = new THREE.MeshStandardMaterial({
-    color: 0xb8892f,
-    roughness: 1,
-    flatShading: true,
-  });
-  const mesh = new THREE.InstancedMesh(geometry, material, tufts * bladesPerTuft);
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  mesh.frustumCulled = false;
-
-  let seed = 0x1f2e3d4c;
-  const random = (): number => {
-    seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
-    return seed / 4294967296;
-  };
-
-  const dummy = new THREE.Object3D();
-  for (let i = 0; i < tufts; i++) {
-    const side = Math.floor(random() * 4);
-    const along = random() * 132 - 66;
-    const edge = 64 + random() * 5;
-    let x = along;
-    let z = edge;
-    if (side === 0) {
-      x = along;
-      z = edge;
-    } else if (side === 1) {
-      x = along;
-      z = -edge;
-    } else if (side === 2) {
-      x = edge;
-      z = along;
-    } else {
-      x = -edge;
-      z = along;
-    }
-
-    for (let blade = 0; blade < bladesPerTuft; blade++) {
-      const scale = 0.7 + random() * 0.9;
-      dummy.position.set(x + (random() - 0.5) * 1.4, 0.28 * scale, z + (random() - 0.5) * 1.4);
-      dummy.rotation.set(0, random() * Math.PI * 2, (random() - 0.5) * 0.2);
-      dummy.scale.setScalar(scale);
-      dummy.updateMatrix();
-      mesh.setMatrixAt(i * bladesPerTuft + blade, dummy.matrix);
-    }
-  }
-  mesh.instanceMatrix.needsUpdate = true;
-  scene.add(mesh);
+  /** Landschaft (Boden, Wasser, Baeume, Gras). */
+  landscape: LandscapeHandle;
 }
 
 export function createScene(canvas: HTMLCanvasElement): SceneHandle {
@@ -108,9 +57,14 @@ export function createScene(canvas: HTMLCanvasElement): SceneHandle {
   ground.receiveShadow = true;
   scene.add(ground);
 
-  createGrass(scene);
+  // Der flache Plangrund bleibt als Unterlage in der Ferne liegen; die
+  // eigentliche Landschaft (Huegel, Fluss, Wald) kommt darueber.
+  ground.position.y = -0.05;
 
-  const handle: SceneHandle = { renderer, scene, camera, sun, ground };
+  const landscape = buildLandscape();
+  scene.add(landscape.group);
+
+  const handle: SceneHandle = { renderer, scene, camera, sun, ground, landscape };
   resizeScene(handle, canvas.clientWidth || 960, canvas.clientHeight || 540);
   return handle;
 }

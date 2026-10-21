@@ -699,7 +699,11 @@ export function createBattle(seed: number = 1): Battle {
 
   for (let side = 0; side < 2; side++) {
     const faction: Faction = side === 0 ? 'player' : 'enemy';
-    const z = side === 0 ? 26 : -26;
+    // Aufstellung: Beide Armeen stehen auf der freien Flaeche im Sueden der
+    // Karte (z = 20..38). Noerdlich davon liegt der Huegel, noch weiter
+    // noerdlich der Fluss. Der Gegner steht naeher am Huegel, der Spieler
+    // im offenen Feld — das ergibt ein Gefecht mit Anhoehe in Reichweite.
+    const z = side === 0 ? 34 : 20;
     const facing = side === 0 ? Math.PI : 0;
 
     for (let i = 0; i < kinds.length; i++) {

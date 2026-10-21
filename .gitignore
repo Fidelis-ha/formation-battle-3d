@@ -1,0 +1,5 @@
+node_modules/
+dist/
+.reviews/shots/*.png
+*.log
+.DS_Store

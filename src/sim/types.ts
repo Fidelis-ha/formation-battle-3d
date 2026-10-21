@@ -7,6 +7,10 @@ export interface UnitStats {
   name: string;
   squad: number;
   melee: number;
+  // Aus dem Original belegt: das Unit-Info-Panel hat GETRENNTE Werte fuer
+  // "Melee Damage" und "Ranged Damage" (Strings im Build). Ein Bogenschuetze
+  // schiesst mit seinem Ranged-Wert, im Kontakt mit dem Melee-Wert.
+  rangedDamage: number;
   health: number;
   speed: number;
   meleeDef: number;
@@ -48,6 +52,15 @@ export interface Platoon {
   targetPlatoonId: number | null;
   facing: number;
   autoAttack: boolean;
+  // Aus dem Original: eigener Schalter "Auto Approach". Ist er an, rueckt der
+  // Trupp ohne Befehl selbst auf den naechsten sinnvollen Gegner vor.
+  autoApproach: boolean;
+  // Eigenbewegung aus Auto Approach. Getrennt vom Spielerbefehl (destX/destZ),
+  // damit ein Befehl nicht von der Automatik ueberschrieben wird.
+  autoTargetId: number | null;
+  // Vom Spieler gesetztes Angriffsziel. Trennt Befehl von Automatik.
+  playerTargetId: number | null;
+  autoMoveTo: { x: number; z: number } | null;
   weaponMode: number;
   moraleBroken: boolean;
   soldiers: Soldier[];

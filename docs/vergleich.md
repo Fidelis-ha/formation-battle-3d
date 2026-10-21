@@ -131,3 +131,60 @@ Assets nicht getauscht sind.
 - **Weitere Referenzbilder für Einheitenwerte.** `cover-2.png` und
   `shot-page2.png` zeigen reine Szenen ohne UI. Nur
   `unit-types-panel.png` enthält Werte, und zwar für Cavalry.
+
+## Kampfmechanik: Messung und Korrekturen (21.10.2026)
+
+Die Mechanik war zu Beginn **nicht** in Ordnung. Gemessen wurde mit
+`tests/combat.test.ts` (12 Tests, alle 25 Einheiten-Paarungen) plus
+Verlaufsmessungen über 5 Seeds.
+
+### Gefundene Fehler
+
+| Fehler | Symptom | Ursache |
+|---|---|---|
+| Soldaten kämpften nie | Alle Einheiten nach 5 s auf `idle` | Trupps standen 3,55 m auseinander, Waffe reicht 1,6 m |
+| Kein Nachrücken | Nur die Frontreihe erreichte den Feind | Soldaten blieben auf ihrem Rasterplatz |
+| 2 cm zu weit weg | Einzelkämpfer bei 1,62 m griff nie an | keine Kontakt-Toleranz |
+| Auto Approach fehlte | Truppen ohne Befehl standen still | Schalter im Build vorhanden, im Nachbau nicht |
+| Auto Approach überschrieb Befehle | Konter-Strategie wirkungslos | `destX` doppelt benutzt |
+| Erfundene Moral-Mechanik | Truppen flohen bei 30 % Verlust | im Original nicht belegt |
+| Fernkampf nutzte Melee-Wert | Bogenschützen-Duelle dauerten 300 s | `RangedDamage` nicht modelliert |
+| Frontreihe fiel, Rest erstarrte | Schlacht stand bei zwei Truppen still | Formation füllte nicht von vorne auf |
+| KI maß am Truppmittelpunkt | Trupp galt als im Kontakt, Front war 2,15 m weg | Mittelpunkt statt Frontreihe gemessen |
+
+### Was aus dem Build belegt ist
+
+Das Unit-Panel des Originals führt **getrennte** Werte: `MeleeDamage`,
+`RangedDamage`, `MeleeDefense`, `RangedDefense`, `Health`, `StaminaBar`,
+`SquadSize`. Ebenfalls belegt: die drei Schalter `AutoAttack`,
+`AutoApproachButton`, `SwitchWeapon` (`SwitchToMeleeButton` /
+`SwitchToRangedButton`).
+
+### Was NICHT belegt ist
+
+- **`DAMAGE_SCALE = 0.42`.** Mit den Original-Schadenswerten war eine
+  5-gegen-5-Schlacht nach 33 Sekunden vorbei. Die Skalierung ist meine
+  Kalibrierung, keine Messung.
+- **`rangedDamage: 8` für Archer.** Belegt ist nur, dass es einen getrennten
+  Fernkampfwert gibt — nicht seine Höhe.
+- **Die anderen vier Einheiten.** Nur Cavalry ist aus dem Original-Panel
+  abgelesen (Melee 15, Health 120, Speed 5,5, Squad 20, je 20 % Defense).
+- **Die Aufstellung** (Abstand 7 m, z = ±26) ist am Referenzbild ausgerichtet,
+  nicht aus dem Build gelesen.
+
+### Messwerte nach den Korrekturen
+
+| Spielweise | Dauer | Ausgang über 5 Seeds |
+|---|---|---|
+| ohne Befehl | 111–134 s | 2 Siege, 3 Niederlagen |
+| mit Konter-Strategie | 40–41 s | 5 Siege, 0 Niederlagen |
+
+Der Unterschied ist damit messbar: Wer die richtigen Truppen auf die richtigen
+Gegner schickt, gewinnt klar und schnell. Wer nichts tut, verliert meist.
+
+### Grenze
+
+Geprüft ist die Simulation, nicht das Spielgefühl. Der Prüfbrowser rendert mit
+etwa 0,7 fps; gemessen wird über einen Vorschub der Simulation. Ob sich
+Kameraführung, Trefferfeedback und Tempo richtig anfühlen, muss am Gerät
+beurteilt werden.

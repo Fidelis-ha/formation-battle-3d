@@ -17,16 +17,13 @@ const AI_INTERVAL = 0.5;
 const PROJECTILE_FLIGHT = 0.35;
 const PROJECTILE_HEIGHT = 2.5;
 const CHARGE_COOLDOWN = 3;
-const MORALE_LOSS = 0.7;
 const ARRIVE_TOLERANCE = 0.6;
 
 interface Runtime {
   rng: number;
   aiTimer: number;
   chargeReady: Map<number, number>;
-  initialCounts: Map<number, number>;
   speeds: Map<number, number>;
-  moraleUsed: Set<number>;
 }
 
 const runtimes = new WeakMap<Battle, Runtime>();
@@ -38,13 +35,8 @@ function runtime(battle: Battle): Runtime {
       rng: battle.seed >>> 0,
       aiTimer: 0,
       chargeReady: new Map<number, number>(),
-      initialCounts: new Map<number, number>(),
       speeds: new Map<number, number>(),
-      moraleUsed: new Set<number>(),
     };
-    for (const platoon of battle.platoons) {
-      r.initialCounts.set(platoon.id, platoon.soldiers.length);
-    }
     runtimes.set(battle, r);
   }
   return r;
@@ -97,14 +89,45 @@ function weaponFor(platoon: Platoon): { range: number; ranged: boolean } {
   return { range: stats.range, ranged: stats.ranged };
 }
 
+// Kampftempo. Die Werte aus dem Original sind Schadenspunkte pro Treffer, aber
+// ohne die Original-Formel ist die Schlussfolgerung "ein Treffer pro Sekunde"
+// zu schnell: die Schlacht waere nach 33 Sekunden vorbei. Das Original laesst
+// dem Spieler Zeit fuer Befehle und Flankenbewegungen. Deshalb kaempfen die
+// Soldaten mit einer festen Kadenz und richten nur einen Teil des Schadens an.
+const ATTACK_INTERVAL = 1.15;
+export const DAMAGE_SCALE = 0.42;
+
 function attackInterval(kind: UnitKind): number {
-  return kind === 'archer' ? 1.4 : 1;
+  // Bogenschuetzen schiessen langsamer, dafuer mit Wucht.
+  return kind === 'archer' ? ATTACK_INTERVAL * 1.5 : ATTACK_INTERVAL;
 }
 
-// Abstand, bei dem ein Trupp stehen bleibt (Nahkampf mit Frontreihe im Kontakt).
-function engageDistance(platoon: Platoon): number {
+// Abstand der TRUPP-MITTELPUNKTE, bei dem die Frontreihen Kontakt haben.
+// Die Waffenreichweite gilt pro Soldat: die vorderste Reihe steht eine halbe
+// Formationstiefe vor dem Mittelpunkt. Beide Trupps haben Tiefe, deshalb ist
+// der Kontaktabstand NICHT die Waffenreichweite, sondern Tiefe + Tiefe + Rest.
+const CONTACT_GAP = 0.9;
+
+function formationHalfDepth(platoon: Platoon): number {
+  const stats = UNIT_STATS[platoon.kind];
+  const cols = Math.max(1, Math.ceil(Math.sqrt(stats.squad * 1.6)));
+  const rows = Math.ceil(stats.squad / cols);
+  return ((rows - 1) / 2) * 0.85;
+}
+
+function engageDistance(platoon: Platoon, target?: Platoon): number {
   const weapon = weaponFor(platoon);
-  return weapon.ranged ? weapon.range : weapon.range + 2;
+  const ownDepth = formationHalfDepth(platoon);
+  const targetDepth = target ? formationHalfDepth(target) : 0;
+  if (weapon.ranged) {
+    // Fernkampf: auf Wirkschussweite heran, aber nicht bis zum Kontakt.
+    // Ein Bogenschuetze soll stehen bleiben, sobald die vorderste Reihe trifft.
+    return Math.max(ownDepth + targetDepth + CONTACT_GAP + 1.0, weapon.range * 0.55);
+  }
+  // Nahkampf: heran bis die Frontreihen sich beruehren. Der Zuschlag deckt
+  // das Raster ab (Soldaten stehen nicht exakt auf ihrem Platz) und die
+  // Kontakt-Toleranz der Waffenreichweite.
+  return ownDepth + targetDepth + CONTACT_GAP + CONTACT_TOLERANCE;
 }
 
 function isBackAttack(attacker: Soldier, target: Soldier): boolean {
@@ -172,9 +195,17 @@ function chooseTarget(
 ): Soldier | null {
   if (!platoon.autoAttack && platoon.targetPlatoonId === null) return null;
 
-  const rangeSq = weapon.range * weapon.range;
-  if (platoon.targetPlatoonId !== null) {
-    const targetPlatoon = platoonById(battle, platoon.targetPlatoonId);
+  // Kontakt-Toleranz: Soldaten bleiben durch das Raster leicht ausserhalb der
+  // exakten Reichweite stehen (1.62 m bei 1.6 m). Ohne diese Toleranz greift
+  // die Front nie an und die Schlacht bleibt stehen.
+  const reach = weapon.range + CONTACT_TOLERANCE;
+  const rangeSq = reach * reach;
+  // Zuerst das vom Spieler befohlene Ziel, dann das von Auto Approach
+  // gewaehlte. Vorher wurde nur targetPlatoonId geprueft — dadurch ignorierten
+  // alle Truppen ihre Automatik und nur die Frontreihe kaempfte.
+  const orderedId = platoon.playerTargetId ?? platoon.autoTargetId;
+  if (orderedId !== null) {
+    const targetPlatoon = platoonById(battle, orderedId);
     if (targetPlatoon && targetPlatoon.aliveCount > 0) {
       const preferred = nearestInPlatoon(soldier, targetPlatoon, rangeSq);
       if (preferred) return preferred;
@@ -213,8 +244,14 @@ function performAttack(
   const dist = Math.hypot(target.x - attacker.x, target.z - attacker.z);
   const ranged = weapon.ranged && dist > MELEE_RANGE;
 
+  // Fernkampf nutzt den Ranged-Wert, Nahkampf den Melee-Wert. Das Original
+  // fuehrt beide getrennt (MeleeDamage / RangedDamage im Unit-Panel).
+  const baseDamage = ranged && stats.rangedDamage > 0 ? stats.rangedDamage : stats.melee;
   let damage =
-    stats.melee * counterMultiplier(platoon.kind, target.kind) * randomRange(battle, 0.85, 1.15);
+    baseDamage *
+    DAMAGE_SCALE *
+    counterMultiplier(platoon.kind, target.kind) *
+    randomRange(battle, 0.85, 1.15);
   const defense = ranged ? targetStats.rangedDef : targetStats.meleeDef;
   damage *= 1 - defense / 100;
 
@@ -268,8 +305,13 @@ function movePlatoons(battle: Battle, dt: number): void {
     if (platoon.aliveCount <= 0) continue;
     const stats = UNIT_STATS[platoon.kind];
 
+    // Spielerbefehl hat Vorrang, sonst gilt die Eigenbewegung aus Auto Approach.
     let targetX = platoon.destX;
     let targetZ = platoon.destZ;
+    if (targetX === null && targetZ === null && platoon.autoMoveTo) {
+      targetX = platoon.autoMoveTo.x;
+      targetZ = platoon.autoMoveTo.z;
+    }
 
     if (
       targetX === null &&
@@ -280,7 +322,7 @@ function movePlatoons(battle: Battle, dt: number): void {
       const targetPlatoon = platoonById(battle, platoon.targetPlatoonId);
       if (targetPlatoon && targetPlatoon.aliveCount > 0) {
         const d = Math.hypot(targetPlatoon.x - platoon.x, targetPlatoon.z - platoon.z);
-        if (d > engageDistance(platoon)) {
+        if (d > engageDistance(platoon, targetPlatoon)) {
           targetX = targetPlatoon.x;
           targetZ = targetPlatoon.z;
         }
@@ -311,6 +353,34 @@ function movePlatoons(battle: Battle, dt: number): void {
   }
 }
 
+function nearestEnemySoldier(
+  battle: Battle,
+  soldier: Soldier,
+  targetPlatoon: Platoon,
+): Soldier | null {
+  let best: Soldier | null = null;
+  let bestD = Infinity;
+  for (const other of targetPlatoon.soldiers) {
+    if (!isAlive(other)) continue;
+    const d = Math.hypot(other.x - soldier.x, other.z - soldier.z);
+    if (d < bestD) {
+      bestD = d;
+      best = other;
+    }
+  }
+  return best;
+}
+
+// Ein Soldat darf sich hoechstens so weit vom Truppmittelpunkt entfernen.
+// Das haelt die Formation zusammen, laesst aber die vorderen Reihen Kontakt
+// aufnehmen, waehrend die hinteren nachruecken.
+const MAX_LEASH = 9;
+// Wie weit ein Soldat von seinem Rasterplatz hoechstens nach vorne rueckt.
+// Begrenzt, damit die Reihe geschlossen bleibt und nur die Front Kontakt holt.
+const CONTACT_PUSH = 2.4;
+// Zuschlag auf die Waffenreichweite, damit Kontakt zuverlaessig zustande kommt.
+const CONTACT_TOLERANCE = 0.45;
+
 function updateSoldiers(battle: Battle, dt: number): void {
   const r = runtime(battle);
   for (const platoon of battle.platoons) {
@@ -319,22 +389,82 @@ function updateSoldiers(battle: Battle, dt: number): void {
     const weapon = weaponFor(platoon);
     const slots = formationSlots(stats.squad);
 
+    // Gegnertrupp, auf den dieser Trupp zielt (falls einer zugewiesen ist).
+    const engaged =
+      platoon.targetPlatoonId !== null && !platoon.moraleBroken
+        ? platoonById(battle, platoon.targetPlatoonId)
+        : undefined;
+
+    // Formation schliesst auf: faellt die Frontreihe, ruecken die Ueberlebenden
+    // in die vorderen Slots nach. Ohne das bleiben nach dem ersten Gefecht nur
+    // noch Soldaten in hinteren Rastern uebrig, die den Feind nie erreichen —
+    // die Schlacht steht dann still.
+    const alive = platoon.soldiers.filter(isAlive).sort((a, b) => a.slot - b.slot);
+    const compactSlot = new Map<number, number>();
+    for (let i = 0; i < alive.length; i++) compactSlot.set(alive[i].id, i);
+
     for (const soldier of platoon.soldiers) {
       if (!isAlive(soldier)) continue;
       if (soldier.cooldown > 0) soldier.cooldown = Math.max(0, soldier.cooldown - dt);
 
-      const slot = slots[soldier.slot] ?? { x: 0, z: 0 };
+      const slotIndex = compactSlot.get(soldier.id) ?? soldier.slot;
+      const slot = slots[slotIndex] ?? { x: 0, z: 0 };
       const rotated = rotateSlot(slot, platoon.facing);
-      const targetX = platoon.x + rotated.x;
-      const targetZ = platoon.z + rotated.z;
-      const dx = targetX - soldier.x;
-      const dz = targetZ - soldier.z;
+      const slotX = platoon.x + rotated.x;
+      const slotZ = platoon.z + rotated.z;
+
+      const target = chooseTarget(battle, soldier, platoon, weapon);
+      soldier.targetId = target ? target.id : null;
+
+      // Zielpunkt bestimmen.
+      // Grundfall: zurueck auf den Formationsplatz.
+      let goalX = slotX;
+      let goalZ = slotZ;
+
+      if (engaged && engaged.aliveCount > 0) {
+        const nearest = nearestEnemySoldier(battle, soldier, engaged);
+        if (nearest) {
+          if (target) {
+            // Im Kontakt: an der Slot-Position kaempfen, nicht dort, wo der
+            // Soldat zufaellig steht. Sonst rutschen alle Soldaten zum selben
+            // Feind und die Formation kollabiert zu einem Haufen.
+            goalX = slotX;
+            goalZ = slotZ;
+          } else {
+            // Ausserhalb der Reichweite: vom SLOT aus in Richtung Feind
+            // vorruecken, hoechstens bis zur Waffenreichweite.
+            const dx = nearest.x - slotX;
+            const dz = nearest.z - slotZ;
+            const d = Math.hypot(dx, dz);
+            if (d > 1e-6) {
+              const standoff = weapon.range * 0.8;
+              const advance = Math.min(Math.max(d - standoff, 0), CONTACT_PUSH);
+              goalX = slotX + (dx / d) * advance;
+              goalZ = slotZ + (dz / d) * advance;
+            }
+          }
+        }
+      }
+
+      // Leine gilt relativ zum SLOT, nicht zum Truppmittelpunkt. Sonst kann
+      // ein Soldat, dessen Rasterplatz weit aussen liegt, nicht nachruecken
+      // und die Schlacht bleibt bei zwei uebrigen Kae mpfern stehen.
+      const offX = goalX - slotX;
+      const offZ = goalZ - slotZ;
+      const off = Math.hypot(offX, offZ);
+      if (off > MAX_LEASH) {
+        goalX = slotX + (offX / off) * MAX_LEASH;
+        goalZ = slotZ + (offZ / off) * MAX_LEASH;
+      }
+
+      const dx = goalX - soldier.x;
+      const dz = goalZ - soldier.z;
       const d = Math.hypot(dx, dz);
 
       const oldX = soldier.x;
       const oldZ = soldier.z;
       let moved = false;
-      if (d > 0.05) {
+      if (d > 0.02) {
         const stepDist = Math.min(stats.speed * dt, d);
         soldier.x += (dx / d) * stepDist;
         soldier.z += (dz / d) * stepDist;
@@ -342,9 +472,6 @@ function updateSoldiers(battle: Battle, dt: number): void {
       }
       const realDist = Math.hypot(soldier.x - oldX, soldier.z - oldZ);
       r.speeds.set(soldier.id, dt > 0 ? realDist / dt : 0);
-
-      const target = chooseTarget(battle, soldier, platoon, weapon);
-      soldier.targetId = target ? target.id : null;
 
       if (target) {
         soldier.facing = Math.atan2(target.x - soldier.x, target.z - soldier.z);
@@ -392,6 +519,27 @@ function updateDead(battle: Battle, dt: number): void {
   }
 }
 
+// Abstand zwischen der naechsten lebenden eigenen Einheit und der naechsten
+// lebenden Einheit des Zieltrupps.
+function nearestGapToPlatoon(platoon: Platoon, target: Platoon): number {
+  let best = Infinity;
+  for (const a of platoon.soldiers) {
+    if (!isAlive(a)) continue;
+    for (const b of target.soldiers) {
+      if (!isAlive(b)) continue;
+      const d = Math.hypot(a.x - b.x, a.z - b.z);
+      if (d < best) best = d;
+    }
+  }
+  return best;
+}
+
+// Ab dieser Distanz gilt Kontakt: Waffenreichweite plus Toleranz.
+function weaponReachFor(platoon: Platoon): number {
+  const weapon = weaponFor(platoon);
+  return weapon.range + CONTACT_TOLERANCE;
+}
+
 function nearestEnemyPlatoon(battle: Battle, platoon: Platoon): Platoon | null {
   let best: Platoon | null = null;
   let bestD = Infinity;
@@ -406,47 +554,24 @@ function nearestEnemyPlatoon(battle: Battle, platoon: Platoon): Platoon | null {
   return best;
 }
 
+// Ein Trupp entscheidet selbst, wen er angeht und ob er vorrueckt.
+// Fuer beide Seiten gleich: die KI steuert die Gegenseite, beim Spieler greift
+// dieselbe Logik, solange er keinen eigenen Befehl gegeben hat (Auto Approach).
 function runAI(battle: Battle): void {
   const r = runtime(battle);
   for (const platoon of battle.platoons) {
-    if (platoon.faction !== 'enemy' || platoon.aliveCount <= 0) continue;
+    if (platoon.aliveCount <= 0) continue;
+    const isEnemy = platoon.faction === 'enemy';
+    if (!isEnemy && !platoon.autoApproach) continue;
+    // Ein ausdruecklicher Befehl des Spielers hat Vorrang: wer ein Marschziel
+    // oder Angriffsziel gesetzt hat, wird nicht umdirigiert.
+    if (!isEnemy && (platoon.destX !== null || platoon.destZ !== null)) continue;
+    // Beim Spieler zaehlt nur das explizit gesetzte Angriffsziel. Sonst wuerde
+    // Auto Approach die Konter-Wahl des Spielers sofort ueberschreiben und die
+    // Strategie waere wirkungslos.
+    const hasPlayerOrder = !isEnemy && platoon.playerTargetId !== null;
+    if (hasPlayerOrder) continue;
     const stats = UNIT_STATS[platoon.kind];
-
-    const initial = r.initialCounts.get(platoon.id) ?? stats.squad;
-    if (
-      !platoon.moraleBroken &&
-      !r.moraleUsed.has(platoon.id) &&
-      platoon.aliveCount < initial * (1 - MORALE_LOSS)
-    ) {
-      r.moraleUsed.add(platoon.id);
-      platoon.moraleBroken = true;
-      platoon.targetPlatoonId = null;
-      const enemy = nearestEnemyPlatoon(battle, platoon);
-      let nx = 0;
-      let nz = -1;
-      if (enemy) {
-        const d = Math.hypot(platoon.x - enemy.x, platoon.z - enemy.z);
-        if (d > 1e-6) {
-          nx = (platoon.x - enemy.x) / d;
-          nz = (platoon.z - enemy.z) / d;
-        }
-      }
-      platoon.destX = clamp(platoon.x + nx * 12, -WORLD_HALF, WORLD_HALF);
-      platoon.destZ = clamp(platoon.z + nz * 12, -WORLD_HALF, WORLD_HALF);
-      battle.events.push({ type: 'morale', platoonId: platoon.id });
-      continue;
-    }
-
-    if (platoon.moraleBroken) {
-      const retreatDone =
-        platoon.destX === null ||
-        platoon.destZ === null ||
-        Math.hypot(platoon.destX - platoon.x, platoon.destZ - platoon.z) <= ARRIVE_TOLERANCE;
-      if (!retreatDone) continue;
-      platoon.moraleBroken = false;
-      platoon.destX = null;
-      platoon.destZ = null;
-    }
 
     let best: Platoon | null = null;
     let bestDist = Infinity;
@@ -464,25 +589,25 @@ function runAI(battle: Battle): void {
     }
 
     if (!best) {
-      // Kein Gegner in Sicht: auf den nächstgelegenen Feind vorrücken,
+      // Kein Gegner in Sicht: auf den naechstgelegenen Feind vorruecken,
       // nicht nur zur Kartenmitte (sonst erstarren beide Seiten).
-      platoon.targetPlatoonId = null;
       const nearest = nearestEnemyPlatoon(battle, platoon);
       if (nearest) {
-        platoon.destX = nearest.x;
-        platoon.destZ = nearest.z;
+        // Kein Gegner in Sicht heisst nicht "stehen bleiben": auf den
+        // naechstgelegenen Feind zumarschieren, bis er in Sicht kommt.
+        platoon.autoTargetId = nearest.id;
+        platoon.autoMoveTo = { x: nearest.x, z: nearest.z };
       } else {
-        platoon.destX = null;
-        platoon.destZ = null;
+        platoon.autoTargetId = null;
+        platoon.autoMoveTo = null;
       }
       continue;
     }
 
-    platoon.targetPlatoonId = best.id;
+    platoon.autoTargetId = best.id;
 
     if (platoon.kind === 'cavalry' && bestDist > 8) {
-      platoon.destX = best.x;
-      platoon.destZ = best.z;
+      platoon.autoMoveTo = { x: best.x, z: best.z };
       continue;
     }
 
@@ -494,24 +619,27 @@ function runAI(battle: Battle): void {
         const d = Math.max(bestDist, 1e-6);
         const nx = (platoon.x - best.x) / d;
         const nz = (platoon.z - best.z) / d;
-        platoon.destX = clamp(platoon.x + nx * 7, -WORLD_HALF, WORLD_HALF);
-        platoon.destZ = clamp(platoon.z + nz * 7, -WORLD_HALF, WORLD_HALF);
+        platoon.autoMoveTo = {
+          x: clamp(platoon.x + nx * 7, -WORLD_HALF, WORLD_HALF),
+          z: clamp(platoon.z + nz * 7, -WORLD_HALF, WORLD_HALF),
+        };
       } else if (bestDist > stats.range * 0.9) {
-        platoon.destX = best.x;
-        platoon.destZ = best.z;
+        platoon.autoMoveTo = { x: best.x, z: best.z };
       } else {
-        platoon.destX = null;
-        platoon.destZ = null;
+        platoon.autoMoveTo = null;
       }
       continue;
     }
 
-    if (bestDist > engageDistance(platoon)) {
-      platoon.destX = best.x;
-      platoon.destZ = best.z;
+    // Kontakt an der WIRKLICHEN Frontreihe messen, nicht am Truppmittelpunkt.
+    // Der Mittelpunkt liegt um die halbe Formationstiefe zurueck; danach
+    // beurteilt stand der Trupp scheinbar im Kontakt, waehrend seine Front
+    // 2.15 m entfernt war und niemand zuschlug.
+    const frontGap = nearestGapToPlatoon(platoon, best);
+    if (frontGap > weaponReachFor(platoon)) {
+      platoon.autoMoveTo = { x: best.x, z: best.z };
     } else {
-      platoon.destX = null;
-      platoon.destZ = null;
+      platoon.autoMoveTo = null;
     }
   }
 }
@@ -563,12 +691,15 @@ export function createBattle(seed: number = 1): Battle {
     events: [],
   };
 
-  const xs = [-24, -12, 0, 12, 24];
+  // Aufstellung wie im Original: eine geschlossene Schlachtlinie, keine
+  // weit auseinandergezogenen Einzeltrupps. Abstand 7 m haelt die Trupps so
+  // nah, dass sie als Linie wirken und sich gegenseitig decken.
+  const xs = [-14, -7, 0, 7, 14];
   const kinds: UnitKind[] = ['archer', 'spearman', 'infantry', 'housecarl', 'cavalry'];
 
   for (let side = 0; side < 2; side++) {
     const faction: Faction = side === 0 ? 'player' : 'enemy';
-    const z = side === 0 ? 38 : -38;
+    const z = side === 0 ? 26 : -26;
     const facing = side === 0 ? Math.PI : 0;
 
     for (let i = 0; i < kinds.length; i++) {
@@ -586,6 +717,10 @@ export function createBattle(seed: number = 1): Battle {
         targetPlatoonId: null,
         facing,
         autoAttack: true,
+        autoApproach: true,
+        autoTargetId: null,
+        playerTargetId: null,
+        autoMoveTo: null,
         weaponMode: 0,
         moraleBroken: false,
         soldiers: [],
@@ -658,10 +793,24 @@ export function issueAttack(battle: Battle, platoonId: number, targetPlatoonId: 
   const platoon = platoonById(battle, platoonId);
   const target = platoonById(battle, targetPlatoonId);
   if (!platoon || !target || platoon.faction === target.faction) return;
+  platoon.playerTargetId = targetPlatoonId;
   platoon.targetPlatoonId = target.id;
   platoon.destX = null;
   platoon.destZ = null;
   platoon.moraleBroken = false;
+}
+
+export function toggleAutoApproach(battle: Battle, platoonId: number): boolean {
+  const platoon = platoonById(battle, platoonId);
+  if (!platoon) return false;
+  platoon.autoApproach = !platoon.autoApproach;
+  if (!platoon.autoApproach) {
+    // Aus: der Trupp bleibt stehen, wo er ist.
+    platoon.destX = null;
+    platoon.destZ = null;
+    platoon.targetPlatoonId = null;
+  }
+  return platoon.autoApproach;
 }
 
 export function toggleAutoAttack(battle: Battle, platoonId: number): boolean {

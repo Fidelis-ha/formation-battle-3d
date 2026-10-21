@@ -4,6 +4,7 @@ import { UNIT_STATS } from '../sim/units';
 export interface HudHandlers {
   onSelectPlatoon(id: number): void;
   onToggleAutoAttack(): void;
+  onToggleAutoApproach(): void;
   onSwitchWeapon(): void;
   onPause(): void;
   onMinimapClick(x: number, z: number): void;
@@ -246,6 +247,13 @@ export function createHud(handlers: HudHandlers): Hud {
   autoButton.append(autoLabel, autoKey, autoState);
   autoButton.addEventListener('click', () => handlers.onToggleAutoAttack());
 
+  const approachButton = el('button', 'ui-btn cmd-btn');
+  approachButton.type = 'button';
+  const approachLabel = el('span', 'cmd-label', 'Auto Approach');
+  const approachState = el('span', 'cmd-state', 'ON');
+  approachButton.append(approachLabel, approachState);
+  approachButton.addEventListener('click', () => handlers.onToggleAutoApproach());
+
   const weaponButton = el('button', 'ui-btn cmd-btn');
   weaponButton.type = 'button';
   const weaponLabelEl = el('span', 'cmd-label', 'Switch Weapon');
@@ -254,7 +262,7 @@ export function createHud(handlers: HudHandlers): Hud {
   weaponButton.append(weaponLabelEl, weaponKey, weaponState);
   weaponButton.addEventListener('click', () => handlers.onSwitchWeapon());
 
-  command.append(autoButton, weaponButton);
+  command.append(autoButton, approachButton, weaponButton);
 
   const version = el('div', 'hud-version', 'Formation Battle - v0.1.5');
 
@@ -336,12 +344,18 @@ export function createHud(handlers: HudHandlers): Hud {
     if (selected === undefined) {
       autoState.textContent = '\u2014';
       weaponState.textContent = '\u2014';
+      approachState.textContent = '\u2014';
       autoButton.classList.remove('active');
       weaponButton.classList.remove('active');
+      approachButton.classList.remove('active');
     } else {
       autoState.textContent = selected.autoAttack ? 'ON' : 'OFF';
       autoButton.classList.toggle('active', selected.autoAttack);
       autoButton.setAttribute('aria-pressed', selected.autoAttack ? 'true' : 'false');
+
+      approachState.textContent = selected.autoApproach ? 'ON' : 'OFF';
+      approachButton.classList.toggle('active', selected.autoApproach);
+      approachButton.setAttribute('aria-pressed', selected.autoApproach ? 'true' : 'false');
 
       weaponState.textContent = weaponLabel(selected.kind, selected.weaponMode);
       weaponButton.classList.toggle('active', selected.weaponMode === 1);

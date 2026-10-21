@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createBattle, drainEvents, step } from '../src/sim/battle';
+import { createBattle, drainEvents, step, DAMAGE_SCALE } from '../src/sim/battle';
 import { formationSlots, formationWidth } from '../src/sim/formation';
 import type { Battle, Soldier } from '../src/sim/types';
 import { counterMultiplier } from '../src/sim/units';
@@ -203,9 +203,11 @@ describe('Schadensformel', () => {
     );
     expect(hits.length).toBeGreaterThan(0);
 
-    // 13 * 2.0 * [0.85..1.15] * (1 - 5/100)
-    const min = 13 * 2.0 * 0.85 * 0.95;
-    const max = 13 * 2.0 * 1.15 * 0.95;
+    // 13 * DAMAGE_SCALE * 2.0 * [0.85..1.15] * (1 - 5/100)
+    // DAMAGE_SCALE haelt die Schlachtdauer im Rahmen des Originals (~2 Minuten);
+    // ohne ihn waere eine 5v5-Schlacht nach 33 Sekunden vorbei.
+    const min = 13 * DAMAGE_SCALE * 2.0 * 0.85 * 0.95;
+    const max = 13 * DAMAGE_SCALE * 2.0 * 1.15 * 0.95;
     for (const hit of hits) {
       if (hit.type !== 'hit') continue;
       expect(hit.damage).toBeGreaterThanOrEqual(min);

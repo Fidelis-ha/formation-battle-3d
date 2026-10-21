@@ -1,5 +1,15 @@
 import * as THREE from 'three';
-import { createBattle, step, issueMove, issueAttack, toggleAutoAttack, switchWeapon, platoonAt, drainEvents } from './sim/battle';
+import {
+  createBattle,
+  step,
+  issueMove,
+  issueAttack,
+  toggleAutoAttack,
+  toggleAutoApproach,
+  switchWeapon,
+  platoonAt,
+  drainEvents,
+} from './sim/battle';
 import type { Battle } from './sim/types';
 import { createScene, resizeScene, type SceneHandle } from './render/scene';
 import { createCameraRig, type CameraRig } from './render/camera';
@@ -51,6 +61,10 @@ function startBattle(assets: Assets, scene: SceneHandle, rig: CameraRig): void {
     onToggleAutoAttack: () => {
       if (!app || app.selectedId === null) return;
       toggleAutoAttack(app.battle, app.selectedId);
+    },
+    onToggleAutoApproach: () => {
+      if (!app || app.selectedId === null) return;
+      toggleAutoApproach(app.battle, app.selectedId);
     },
     onSwitchWeapon: () => {
       if (!app || app.selectedId === null) return;

@@ -99,6 +99,25 @@ function startBattle(assets: Assets, scene: SceneHandle, rig: CameraRig): void {
     get battle() {
       return app?.battle ?? null;
     },
+    // Bildschirmpunkt eines Weltpunkts, ueber die echte Kamera projiziert.
+    // Damit lassen sich Klicks praezise pruefen, ohne Koordinaten zu raten.
+    project: (x: number, z: number) => {
+      if (!app) return null;
+      const v = new THREE.Vector3(x, 0, z).project(app.scene.camera);
+      const canvas = app.scene.renderer.domElement;
+      const rect = canvas.getBoundingClientRect();
+      return {
+        x: rect.left + ((v.x + 1) / 2) * rect.width,
+        y: rect.top + ((1 - v.y) / 2) * rect.height,
+      };
+    },
+    // Weltpunkt unter einem Bildschirmpunkt.
+    unproject: (clientX: number, clientY: number) => {
+      if (!app) return null;
+      const canvas = app.scene.renderer.domElement;
+      const rect = canvas.getBoundingClientRect();
+      return app.view.screenToWorld(clientX - rect.left, clientY - rect.top);
+    },
     get stats() {
       if (!app) return null;
       const info = app.scene.renderer.info;

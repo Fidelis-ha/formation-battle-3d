@@ -44,5 +44,14 @@ docs/        Spezifikation, Recon, Assets, Vergleich
 
 ## Stand
 
-Prototyp. Simulation und Darstellung laufen, die Schlacht ist von Anfang bis
-Sieg/Niederlage spielbar. Offene Punkte stehen in `docs/vergleich.md`.
+Prototyp, spielbar von Aufstellung bis Ergebnis.
+
+Belegt und geprüft:
+- Simulation mit 8 Tests, Schlacht endet nachweislich (passiv: Niederlage nach
+  137 s; mit Angriffsbefehl: Ende nach 114 s)
+- Steuerung: jede Eingabe setzt den erwarteten Zustand (Tastatur, Links- und
+  Rechtsklick, Ziel- und Marschbefehle, Auswahlregeln)
+- Bildaufbau: Bodenfarbe am Original gemessen, Abweichung 1–2 Farbstufen
+- Live-Deploy über GitHub Actions, auf der Produktionsseite nachgeprüft
+
+Bekannte Abweichungen und was noch fehlt: `docs/vergleich.md`.

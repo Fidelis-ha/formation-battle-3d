@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createBattle, drainEvents, step, DAMAGE_SCALE } from '../src/sim/battle';
+import { createBattle, drainEvents, step, DAMAGE_SCALE, startBattlePhase } from '../src/sim/battle';
 import { formationSlots, formationWidth } from '../src/sim/formation';
 import type { Battle, Soldier } from '../src/sim/types';
 import { counterMultiplier } from '../src/sim/units';
@@ -51,7 +51,7 @@ describe('formation', () => {
 
 describe('createBattle', () => {
   it('baut 10 Trupps mit 280 Soldaten', () => {
-    const battle = createBattle(42);
+    const battle = startBattlePhase(createBattle(42));
     expect(battle.platoons).toHaveLength(10);
     expect(battle.platoons.filter((p) => p.faction === 'player')).toHaveLength(5);
     expect(battle.platoons.filter((p) => p.faction === 'enemy')).toHaveLength(5);
@@ -63,8 +63,8 @@ describe('createBattle', () => {
 
 describe('Determinismus', () => {
   it('liefert bei gleichem Seed nach 60 Schritten gleiche HP-Summen', () => {
-    const a = createBattle(1234);
-    const b = createBattle(1234);
+    const a = startBattlePhase(createBattle(1234));
+    const b = startBattlePhase(createBattle(1234));
     for (let i = 0; i < 60; i++) {
       step(a, 0.25);
       step(b, 0.25);
@@ -86,7 +86,7 @@ function totalHpOf(battle: ReturnType<typeof createBattle>, faction: 'player' | 
 
 describe('Eigenbeschuss', () => {
   it('zielt nach 30 s nie auf die eigene Fraktion', () => {
-    const battle = createBattle(77);
+    const battle = startBattlePhase(createBattle(77));
     for (let i = 0; i < 300; i++) {
       step(battle, 0.1);
       for (const projectile of battle.projectiles) {
@@ -102,7 +102,7 @@ describe('Eigenbeschuss', () => {
     // Test hielt sie still und prueft damit nur die Automatik, nicht den
     // Eigenbeschuss. Jetzt: Automatik aus, Truppen im Kontakt, dann pruefen.
 
-    const battle = createBattle(78);
+    const battle = startBattlePhase(createBattle(78));
     const players = battle.platoons.filter((p) => p.faction === 'player');
     const infantry = players.find((p) => p.kind === 'infantry');
     const spearman = players.find((p) => p.kind === 'spearman');
@@ -187,7 +187,7 @@ describe('Eigenbeschuss', () => {
 
 describe('Siegbedingung', () => {
   it('setzt status victory, wenn alle Gegner tot sind', () => {
-    const battle = createBattle(5);
+    const battle = startBattlePhase(createBattle(5));
     for (const platoon of battle.platoons) {
       if (platoon.faction !== 'enemy') continue;
       for (const soldier of platoon.soldiers) {
@@ -206,7 +206,7 @@ describe('Siegbedingung', () => {
 
 describe('Schadensformel', () => {
   it('bleibt mit fixem Seed im erwarteten Fenster', () => {
-    const battle = createBattle(2024);
+    const battle = startBattlePhase(createBattle(2024));
     const playerPlatoon = battle.platoons.find(
       (p) => p.faction === 'player' && p.kind === 'infantry',
     );

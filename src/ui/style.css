@@ -129,6 +129,18 @@ button {
   background: #ffd843;
 }
 
+/* Sprachumschalter: sitzt rechts neben dem Pause-Knopf. */
+.hud-lang {
+  position: absolute;
+  top: 1.5%;
+  left: 13%;
+  padding: 5px 9px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  min-width: 38px;
+}
+
 .hud-timer {
   position: absolute;
   top: 1.2%;
@@ -795,4 +807,171 @@ button {
 
 .result-panel .ui-btn {
   min-width: 140px;
+}
+
+
+/* ---------------------------------------------------------------- Handy */
+/*
+ * Auf Touch-Geraeten soll das Spiel wie eine App wirken: kein Doppeltippen-
+ * Zoom, kein Gummiband-Scrollen, keine Textauswahl. Die Kommandoknopfleiste
+ * bekommt groessere Trefferflaechen, weil ein Finger ungenauer trifft als
+ * eine Maus.
+ */
+html, body {
+  touch-action: none;
+  overscroll-behavior: none;
+  -webkit-text-size-adjust: 100%;
+}
+
+#scene {
+  touch-action: none;
+}
+
+@media (pointer: coarse) {
+  .ui-btn {
+    min-height: 34px;
+    padding-left: 12px;
+    padding-right: 12px;
+  }
+  .cmd-btn {
+    min-height: 36px;
+  }
+  .hud-lang {
+    left: 15%;
+    min-width: 44px;
+  }
+}
+
+/* ------------------------------------------------------------- Bauphase */
+/*
+ * Bauleiste: sitzt unten ueber der Kommandoleiste. Zeigt Restzeit,
+ * Rohstoffe und die vier Anlagen mit Preis. Eine gewaehlte Anlage ist
+ * hervorgehoben; zu teure Anlagen sind gedimmt.
+ */
+.buildbar {
+  position: absolute;
+  /* Feste Hoehe: die Leiste ist unten verankert, jede zusaetzliche Zeile
+   * wuerde sie nach oben wachsen lassen und das Spielfeld verdecken. */
+  left: 50%;
+  bottom: 6px;
+  transform: translateX(-50%);
+  width: 520px;
+  padding: 6px 10px 8px;
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(24, 32, 48, 0.96), rgba(16, 22, 34, 0.98));
+  border: 1px solid rgba(120, 150, 200, 0.35);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  color: #e8eef8;
+  font-size: 12px;
+  pointer-events: auto;
+  z-index: 30;
+}
+
+.buildbar-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.buildbar-title {
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  color: #ffd843;
+  text-transform: uppercase;
+}
+
+.buildbar-timer,
+.buildbar-resources {
+  color: #cfd8e6;
+  font-variant-numeric: tabular-nums;
+}
+
+.buildbar-start {
+  margin-left: auto;
+  background: #3f7d4a;
+  border-color: #5aa06a;
+  color: #f2fff5;
+  font-weight: 700;
+}
+
+.buildbar-hint {
+  color: #97a6bd;
+  font-size: 10px;
+  margin-bottom: 5px;
+}
+
+.buildbar-list {
+  display: flex;
+  gap: 8px;
+}
+
+.build-btn {
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 5px 4px;
+  border-radius: 8px;
+  border: 1px solid rgba(120, 150, 200, 0.3);
+  background: rgba(38, 50, 72, 0.9);
+  color: #e8eef8;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.build-btn:hover {
+  background: rgba(52, 68, 96, 0.95);
+}
+
+.build-btn.picked {
+  border-color: #ffd843;
+  box-shadow: 0 0 0 2px rgba(255, 216, 67, 0.35) inset;
+  background: rgba(70, 84, 60, 0.95);
+}
+
+.build-btn.unaffordable {
+  opacity: 0.42;
+}
+
+.build-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.build-icon svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+.build-name {
+  font-weight: 600;
+}
+
+.build-cost {
+  color: #ffd843;
+  font-variant-numeric: tabular-nums;
+}
+
+.buildbar-flash {
+  position: absolute;
+  left: 50%;
+  top: -30px;
+  transform: translateX(-50%);
+  padding: 5px 12px;
+  border-radius: 6px;
+  background: rgba(150, 45, 45, 0.95);
+  color: #fff2f2;
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+
+/* Waehrend der Bauphase hat die Kommandoleiste keine Funktion — sie weicht,
+ * damit die Bauleiste das Feld nicht doppelt verdeckt. */
+.hud.building .hud-command {
+  display: none;
 }

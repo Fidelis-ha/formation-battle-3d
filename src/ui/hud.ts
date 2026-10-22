@@ -1,5 +1,6 @@
 import type { Battle, Platoon, UnitKind } from '../sim/types';
 import { UNIT_STATS } from '../sim/units';
+import { t, getLanguage, unitName } from './i18n';
 
 export interface HudHandlers {
   onSelectPlatoon(id: number): void;
@@ -7,6 +8,8 @@ export interface HudHandlers {
   onToggleAutoApproach(): void;
   onSwitchWeapon(): void;
   onPause(): void;
+  /** Sprache umschalten (EN <-> DE). */
+  onToggleLanguage(): void;
   onMinimapClick(x: number, z: number): void;
   onMinimapOrder(x: number, z: number): void;
 }
@@ -80,8 +83,8 @@ function platoonHpRatio(platoon: Platoon): number {
 }
 
 function weaponLabel(kind: UnitKind, mode: number): string {
-  if (kind === 'archer') return mode === 0 ? 'Bow' : 'Dagger';
-  if (kind === 'cavalry') return mode === 0 ? 'Spear' : 'Sword';
+  if (kind === 'archer') return mode === 0 ? t('bow') : t('dagger');
+  if (kind === 'cavalry') return mode === 0 ? t('spear') : t('sword');
   return UNIT_STATS[kind].weapon;
 }
 
@@ -151,7 +154,7 @@ function fillRows(
     refs.row.classList.toggle('selected', selected);
     refs.row.classList.toggle('defeated', platoon.aliveCount <= 0);
     refs.row.setAttribute('aria-label', `${stats.name}, Squad ${platoon.aliveCount}`);
-    refs.name.textContent = stats.name;
+    refs.name.textContent = unitName(platoon.kind);
     refs.count.textContent = String(platoon.aliveCount);
     refs.icon.textContent = ABBREV[platoon.kind];
     refs.fill.style.width = `${(platoonHpRatio(platoon) * 100).toFixed(1)}%`;
@@ -190,8 +193,15 @@ export function createHud(handlers: HudHandlers): Hud {
 
   const pauseButton = el('button', 'ui-btn hud-pause', '\u23F8 Pause');
   pauseButton.type = 'button';
-  pauseButton.setAttribute('aria-label', 'Pause');
+  pauseButton.setAttribute('aria-label', t('pause'));
   pauseButton.addEventListener('click', () => handlers.onPause());
+
+  // Sprachumschalter: zeigt die AKTIVE Sprache, ein Klick wechselt.
+  const langButton = el('button', 'ui-btn hud-lang', getLanguage() === 'de' ? 'DE' : 'EN');
+  langButton.type = 'button';
+  langButton.setAttribute('aria-label', t('language'));
+  langButton.title = t('language');
+  langButton.addEventListener('click', () => handlers.onToggleLanguage());
 
   const timer = el('div', 'hud-timer', '00:00');
 
@@ -214,7 +224,7 @@ export function createHud(handlers: HudHandlers): Hud {
   const minimapCanvas = el('canvas', 'minimap-canvas');
   minimapCanvas.width = MINIMAP_WIDTH;
   minimapCanvas.height = MINIMAP_HEIGHT;
-  minimapCanvas.setAttribute('aria-label', 'Mini Map');
+  minimapCanvas.setAttribute('aria-label', t('miniMap'));
   minimap.append(minimapCanvas);
 
   const minimapCtx = minimapCanvas.getContext('2d');
@@ -241,7 +251,7 @@ export function createHud(handlers: HudHandlers): Hud {
 
   const autoButton = el('button', 'ui-btn cmd-btn');
   autoButton.type = 'button';
-  const autoLabel = el('span', 'cmd-label', 'Auto Attack');
+  const autoLabel = el('span', 'cmd-label', t('autoAttack'));
   const autoKey = el('span', 'cmd-key', 'Q');
   const autoState = el('span', 'cmd-state', 'ON');
   autoButton.append(autoLabel, autoKey, autoState);
@@ -249,16 +259,16 @@ export function createHud(handlers: HudHandlers): Hud {
 
   const approachButton = el('button', 'ui-btn cmd-btn');
   approachButton.type = 'button';
-  const approachLabel = el('span', 'cmd-label', 'Auto Approach');
+  const approachLabel = el('span', 'cmd-label', t('autoApproach'));
   const approachState = el('span', 'cmd-state', 'ON');
   approachButton.append(approachLabel, approachState);
   approachButton.addEventListener('click', () => handlers.onToggleAutoApproach());
 
   const weaponButton = el('button', 'ui-btn cmd-btn');
   weaponButton.type = 'button';
-  const weaponLabelEl = el('span', 'cmd-label', 'Switch Weapon');
+  const weaponLabelEl = el('span', 'cmd-label', t('switchWeapon'));
   const weaponKey = el('span', 'cmd-key', 'E');
-  const weaponState = el('span', 'cmd-state', 'Bow');
+  const weaponState = el('span', 'cmd-state', t('bow'));
   weaponButton.append(weaponLabelEl, weaponKey, weaponState);
   weaponButton.addEventListener('click', () => handlers.onSwitchWeapon());
 
@@ -268,6 +278,7 @@ export function createHud(handlers: HudHandlers): Hud {
 
   root.append(
     pauseButton,
+    langButton,
     timer,
     banner,
     playerList,
@@ -349,11 +360,11 @@ export function createHud(handlers: HudHandlers): Hud {
       weaponButton.classList.remove('active');
       approachButton.classList.remove('active');
     } else {
-      autoState.textContent = selected.autoAttack ? 'ON' : 'OFF';
+      autoState.textContent = selected.autoAttack ? t('on') : t('off');
       autoButton.classList.toggle('active', selected.autoAttack);
       autoButton.setAttribute('aria-pressed', selected.autoAttack ? 'true' : 'false');
 
-      approachState.textContent = selected.autoApproach ? 'ON' : 'OFF';
+      approachState.textContent = selected.autoApproach ? t('on') : t('off');
       approachButton.classList.toggle('active', selected.autoApproach);
       approachButton.setAttribute('aria-pressed', selected.autoApproach ? 'true' : 'false');
 

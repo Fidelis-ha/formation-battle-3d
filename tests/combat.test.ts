@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createBattle, step, issueMove } from '../src/sim/battle';
+import { createBattle, step, issueMove, startBattlePhase } from '../src/sim/battle';
 import { UNIT_STATS } from '../src/sim/units';
 import type { Battle, Platoon, UnitKind } from '../src/sim/types';
 
@@ -13,7 +13,7 @@ import type { Battle, Platoon, UnitKind } from '../src/sim/types';
 
 // Baut eine Schlacht mit nur zwei Trupps auf freiem Feld.
 function duel(attacker: UnitKind, defender: UnitKind, gap = 6): Battle {
-  const battle = createBattle(1234);
+  const battle = startBattlePhase(createBattle(1234));
   battle.platoons = [];
   battle.projectiles = [];
   battle.events = [];
@@ -135,7 +135,7 @@ describe('Counter-Mechanik', () => {
 
 describe('Schlachtverlauf', () => {
   it('Trupps im Kontakt kaempfen, statt stillzustehen', () => {
-    const battle = createBattle(77);
+    const battle = startBattlePhase(createBattle(77));
     const dt = 1 / 30;
     for (let t = 0; t < 60; t += dt) step(battle, dt);
 
@@ -163,7 +163,7 @@ describe('Schlachtverlauf', () => {
   });
 
   it('es gibt echte Verluste auf beiden Seiten', () => {
-    const battle = createBattle(77);
+    const battle = startBattlePhase(createBattle(77));
     const dt = 1 / 30;
     for (let t = 0; t < 90; t += dt) {
       step(battle, dt);
@@ -175,14 +175,14 @@ describe('Schlachtverlauf', () => {
   });
 
   it('die Schlacht endet von selbst', () => {
-    const battle = createBattle(99);
+    const battle = startBattlePhase(createBattle(99));
     const r = runUntilDone(battle, 400);
     expect(r.winner).not.toBe('timeout');
     expect(r.winner).not.toBeNull();
   });
 
   it('dauert nicht unnatuerlich lange', () => {
-    const battle = createBattle(4242);
+    const battle = startBattlePhase(createBattle(4242));
     const r = runUntilDone(battle, 400);
     expect(r.seconds).toBeGreaterThan(30);
     expect(r.seconds).toBeLessThan(300);
@@ -191,7 +191,7 @@ describe('Schlachtverlauf', () => {
 
 describe('Formation', () => {
   it('Truppen bleiben waehrend des Marsches beieinander', () => {
-    const battle = createBattle(5);
+    const battle = startBattlePhase(createBattle(5));
     const own = battle.platoons.filter((p) => p.faction === 'player');
     for (const p of own) issueMove(battle, p.id, p.x, p.z + 10);
 

@@ -10,6 +10,16 @@ import type {
 } from './types';
 import { counterMultiplier, UNIT_STATS } from './units';
 import { heightAt, isForest, isPassable, isWater, slopeAt, nudgePassable } from './terrain';
+import {
+  BUILD_PHASE_SECONDS,
+  START_RESOURCES,
+  STRUCTURE_SPECS,
+  blockedByStructure,
+  enemyBuildPlan,
+  placementError,
+  towerRangeBonus,
+  type StructureKind as BuildKind,
+} from './build';
 
 const WORLD_HALF = 60;
 const MELEE_RANGE = 1.6;
@@ -202,7 +212,8 @@ function chooseTarget(
   // Hoehenvorteil erweitert das Schussfeld: von oben sieht man weiter.
   const ownHeight = heightAt(soldier.x, soldier.z);
   const heightBonus = weapon.ranged ? Math.min(6, Math.max(0, ownHeight) * 0.45) : 0;
-  const reach = weapon.range + CONTACT_TOLERANCE + heightBonus;
+  const towerBonus = weapon.ranged ? towerRangeBonus(battle.structures, soldier.x, soldier.z, platoon.faction) : 0;
+  const reach = weapon.range + CONTACT_TOLERANCE + heightBonus + towerBonus;
   const rangeSq = reach * reach;
   // Zuerst das vom Spieler befohlene Ziel, dann das von Auto Approach
   // gewaehlte. Vorher wurde nur targetPlatoonId geprueft — dadurch ignorierten
@@ -314,6 +325,47 @@ function performAttack(
   }
 }
 
+/**
+ * Einen Schritt gehen und dabei Hindernissen ausweichen.
+ *
+ * Geradeaus auf das Ziel zu laufen reicht nicht: eine Mauer oder eine Klippe
+ * stoppt die Einheit dann fuer immer und die Schlacht steht still. Deshalb
+ * wird bei einem Hindernis die Richtung schrittweise gedreht, bis ein freier
+ * Weg gefunden ist — die Einheit laeuft so am Hindernis entlang.
+ */
+function stepAround(
+  battle: Battle,
+  faction: Faction,
+  fromX: number,
+  fromZ: number,
+  toX: number,
+  toZ: number,
+): { x: number; z: number; moved: boolean } {
+  const dx = toX - fromX;
+  const dz = toZ - fromZ;
+  const d = Math.hypot(dx, dz);
+  if (d < 1e-9) return { x: fromX, z: fromZ, moved: false };
+
+  const free = (px: number, pz: number): boolean => {
+    if (blockedByStructure(battle.structures, px, pz, faction)) return false;
+    if (isWater(px, pz)) return true;
+    return isPassable(px, pz);
+  };
+
+  // Erst geradeaus, dann in wachsenden Winkeln nach beiden Seiten.
+  const angles = [0, 0.4, -0.4, 0.8, -0.8, 1.2, -1.2, 1.6, -1.6, 2.0, -2.0];
+  for (const a of angles) {
+    const cos = Math.cos(a);
+    const sin = Math.sin(a);
+    const ux = (dx / d) * cos - (dz / d) * sin;
+    const uz = (dx / d) * sin + (dz / d) * cos;
+    const nx = fromX + ux * d;
+    const nz = fromZ + uz * d;
+    if (free(nx, nz)) return { x: nx, z: nz, moved: true };
+  }
+  return { x: fromX, z: fromZ, moved: false };
+}
+
 function movePlatoons(battle: Battle, dt: number): void {
   for (const platoon of battle.platoons) {
     if (platoon.aliveCount <= 0) continue;
@@ -322,7 +374,12 @@ function movePlatoons(battle: Battle, dt: number): void {
     // Spielerbefehl hat Vorrang, sonst gilt die Eigenbewegung aus Auto Approach.
     let targetX = platoon.destX;
     let targetZ = platoon.destZ;
-    if (targetX === null && targetZ === null && platoon.autoMoveTo) {
+    // Ein gesetzter Angriffsbefehl des Spielers schlaegt die Automatik. Vorher
+    // gewann `autoMoveTo` gegen `playerTargetId`: der Trupp lief woandershin,
+    // obwohl der Spieler angegriffen hatte — die "kluegere" Strategie war
+    // dadurch schlechter als gar keine.
+    const hasPlayerAttack = platoon.playerTargetId !== null;
+    if (targetX === null && targetZ === null && !hasPlayerAttack && platoon.autoMoveTo) {
       targetX = platoon.autoMoveTo.x;
       targetZ = platoon.autoMoveTo.z;
     }
@@ -352,9 +409,19 @@ function movePlatoons(battle: Battle, dt: number): void {
         platoon.destZ = null;
       } else {
         const stepDist = Math.min(stats.speed * dt, d);
-        platoon.x += (dx / d) * stepDist;
-        platoon.z += (dz / d) * stepDist;
-        platoon.facing = Math.atan2(dx, dz);
+        const step = stepAround(
+          battle,
+          platoon.faction,
+          platoon.x,
+          platoon.z,
+          platoon.x + (dx / d) * stepDist,
+          platoon.z + (dz / d) * stepDist,
+        );
+        if (step.moved) {
+          platoon.x = step.x;
+          platoon.z = step.z;
+          platoon.facing = Math.atan2(dx, dz);
+        }
         if (d - stepDist <= ARRIVE_TOLERANCE) {
           platoon.destX = null;
           platoon.destZ = null;
@@ -557,12 +624,30 @@ function updateSoldiers(battle: Battle, dt: number): void {
         // Klippen und Wasser sperren: der Soldat bleibt stehen, statt
         // hindurchzulaufen. Eine Truppe kann so nicht ueber eine Klippe
         // steigen — genau der Punkt aus dem Auftrag.
-        if (isPassable(nextX, nextZ) || isWater(nextX, nextZ)) {
+        // Gebaute Anlagen sperren zusaetzlich (Mauer, Palisade, Wellenbrecher).
+        const blocked = blockedByStructure(battle.structures, nextX, nextZ, platoon.faction);
+        const terrainOk = isPassable(nextX, nextZ) || isWater(nextX, nextZ);
+        if (!blocked && terrainOk) {
           soldier.x = nextX;
           soldier.z = nextZ;
           moved = stepDist > 1e-6;
         } else {
-          moved = false;
+          // Ausweichen: seitlich am Hindernis entlang, damit die Einheit nicht
+          // davor stehen bleibt (sonst verstopft eine Mauer die ganze Schlacht).
+          const perpX = -(dz / d);
+          const perpZ = dx / d;
+          for (const dir of [1, -1]) {
+            const sx = soldier.x + perpX * stepDist * dir;
+            const sz = soldier.z + perpZ * stepDist * dir;
+            const sBlocked = blockedByStructure(battle.structures, sx, sz, platoon.faction);
+            if (!sBlocked && (isPassable(sx, sz) || isWater(sx, sz))) {
+              soldier.x = sx;
+              soldier.z = sz;
+              moved = true;
+              break;
+            }
+          }
+          if (!moved) moved = false;
         }
       }
       const realDist = Math.hypot(soldier.x - oldX, soldier.z - oldZ);
@@ -714,22 +799,14 @@ function runAI(battle: Battle): void {
     }
 
     if (platoon.kind === 'archer') {
-      // Bogenschützen halten Abstand, kiten aber nicht endlos:
-      // nur im echten Notfall (unter 6 m) zurückweichen, sonst auf
-      // Wirkschussweite heranrücken und stehen bleiben.
-      if (bestDist < 6) {
-        const d = Math.max(bestDist, 1e-6);
-        const nx = (platoon.x - best.x) / d;
-        const nz = (platoon.z - best.z) / d;
-        platoon.autoMoveTo = {
-          x: clamp(platoon.x + nx * 7, -WORLD_HALF, WORLD_HALF),
-          z: clamp(platoon.z + nz * 7, -WORLD_HALF, WORLD_HALF),
-        };
-      } else if (bestDist > stats.range * 0.9) {
-        platoon.autoMoveTo = aim;
-      } else {
-        platoon.autoMoveTo = null;
-      }
+      // Bogenschützen rücken auf Wirkschussweite heran und bleiben dann stehen.
+      //
+      // Vorher wichen sie unter 6 m zurueck. Das war ein Fehler: die
+      // Kavallerie ist schneller als ein Bogenschütze, also floh der Trupp
+      // endlos bis an den Kartenrand und schoss nie. Ein Bogenschütze, der im
+      // Nahkampf steht, hat den Nahkampf-Malus — das ist seine Strafe, nicht
+      // eine Flucht bis ans Kartenende.
+      platoon.autoMoveTo = bestDist > stats.range * 0.9 ? aim : null;
       continue;
     }
 
@@ -791,6 +868,11 @@ export function createBattle(seed: number = 1): Battle {
     seed: seed >>> 0,
     nextId: 1,
     events: [],
+    // Die Schlacht beginnt in der Bauphase (#13).
+    phase: 'build',
+    buildTimeLeft: BUILD_PHASE_SECONDS,
+    resources: { player: START_RESOURCES, enemy: START_RESOURCES },
+    structures: [],
   };
 
   // Aufstellung wie im Original: eine geschlossene Schlachtlinie, keine
@@ -805,7 +887,10 @@ export function createBattle(seed: number = 1): Battle {
     // Karte (z = 20..38). Noerdlich davon liegt der Huegel, noch weiter
     // noerdlich der Fluss. Der Gegner steht naeher am Huegel, der Spieler
     // im offenen Feld — das ergibt ein Gefecht mit Anhoehe in Reichweite.
-    const z = side === 0 ? 34 : 20;
+    // Weiter auseinander als vorher: zwischen den Linien bleibt Platz fuer
+    // die Bauphase (Mauern, Palisaden, Wellenbrecher). Ohne Abstand liegt
+    // jede Anlage im Sperrbereich der Truppen.
+    const z = side === 0 ? 38 : 18;
     const facing = side === 0 ? Math.PI : 0;
 
     for (let i = 0; i < kinds.length; i++) {
@@ -868,6 +953,15 @@ export function step(battle: Battle, dt: number): void {
   if (!Number.isFinite(dt) || dt < 0) return;
   if (dt === 0) {
     checkEnd(battle);
+    return;
+  }
+
+  // Bauphase: die Zeit laeuft, aber niemand bewegt sich. Erst wenn die Zeit
+  // abgelaufen ist oder der Spieler die Schlacht startet, geht es los.
+  if (battle.phase === 'build') {
+    battle.buildTimeLeft = Math.max(0, battle.buildTimeLeft - dt);
+    battle.time += dt;
+    if (battle.buildTimeLeft <= 0) startBattlePhase(battle);
     return;
   }
 
@@ -977,4 +1071,57 @@ export function drainEvents(battle: Battle): BattleEvent[] {
   const events = battle.events.slice();
   battle.events.length = 0;
   return events;
+}
+
+
+// ------------------------------------------------------------------ Bauphase
+
+/**
+ * Eine Anlage bauen. Gibt `null` bei Erfolg zurueck, sonst den i18n-Schluessel
+ * des Grundes (zu teuer, falscher Untergrund, zu nah an einer anderen Anlage).
+ */
+export function buildStructure(
+  battle: Battle,
+  faction: Faction,
+  kind: BuildKind,
+  x: number,
+  z: number,
+): string | null {
+  if (battle.phase !== 'build') return 'buildOnlyInPhase';
+
+  const spec = STRUCTURE_SPECS[kind];
+  if (battle.resources[faction] < spec.cost) return 'notEnoughResources';
+
+  const occupied = battle.platoons
+    .filter((p) => p.aliveCount > 0)
+    .map((p) => ({ x: p.x, z: p.z }));
+  const error = placementError(battle.structures, kind, x, z, faction, occupied);
+  if (error !== null) return error;
+
+  battle.resources[faction] -= spec.cost;
+  battle.structures.push({ id: battle.nextId++, kind, faction, x, z });
+  battle.events.push({ type: 'build', kind, x, z, faction });
+  return null;
+}
+
+/** Bauphase vorzeitig beenden und die Schlacht beginnen. Gibt die Schlacht zurueck. */
+export function startBattlePhase(battle: Battle): Battle {
+  if (battle.phase !== 'build') return battle;
+  battle.phase = 'battle';
+  battle.buildTimeLeft = 0;
+  battle.time = 0;
+  // Die Gegenseite baut ihre Verteidigung selbst — sonst waere die Bauphase
+  // einseitig und der Spieler muesste nichts abwaegen.
+  const occupied = battle.platoons
+    .filter((p) => p.aliveCount > 0)
+    .map((p) => ({ x: p.x, z: p.z }));
+  for (const plan of enemyBuildPlan(battle.structures, occupied)) {
+    const spec = STRUCTURE_SPECS[plan.kind];
+    if (battle.resources.enemy < spec.cost) continue;
+    if (placementError(battle.structures, plan.kind, plan.x, plan.z, 'enemy', occupied) !== null) continue;
+    battle.resources.enemy -= spec.cost;
+    battle.structures.push({ id: battle.nextId++, kind: plan.kind, faction: 'enemy', x: plan.x, z: plan.z });
+  }
+  battle.events.push({ type: 'phase', phase: 'battle' });
+  return battle;
 }

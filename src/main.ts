@@ -17,6 +17,10 @@ import { loadAssets, type Assets } from './render/assets';
 import { createBattleView, type BattleView } from './render/battleview';
 import { createHud, type Hud } from './ui/hud';
 import { createOverlays, type Overlays } from './ui/overlays';
+import { createBuildBar, type BuildBar } from './ui/buildbar';
+import { createStructureView, type StructureView } from './render/structures';
+import { buildStructure, startBattlePhase } from './sim/battle';
+import { initLanguage, t, toggleLanguage } from './ui/i18n';
 
 const BASE_W = 960;
 const BASE_H = 540;
@@ -31,9 +35,16 @@ interface App {
   selectedId: number | null;
   paused: boolean;
   clock: number;
+  /** Anzeige der gebauten Anlagen. */
+  structures: StructureView;
+  /** Bauleiste (nur in der Bauphase sichtbar). */
+  buildBar: BuildBar;
 }
 
 let app: App | null = null;
+
+// Sprache aus dem Speicher lesen, BEVOR die Oberflaeche gebaut wird.
+initLanguage();
 
 function uiRoot(): HTMLElement {
   const el = document.getElementById('ui');
@@ -52,10 +63,12 @@ function scaleUi(): void {
   el.style.top = `${(window.innerHeight - BASE_H * scale) / 2}px`;
 }
 
-function startBattle(assets: Assets, scene: SceneHandle, rig: CameraRig): void {
-  const battle = createBattle(Date.now() % 100000);
-  const view = createBattleView(scene, assets, battle);
-
+function buildUi(
+  battle: Battle,
+  scene: SceneHandle,
+  rig: CameraRig,
+  view: BattleView,
+): { hud: Hud; overlays: Overlays; buildBar: BuildBar; structures: StructureView } {
   const hud = createHud({
     onSelectPlatoon: (id) => selectPlatoon(id),
     onToggleAutoAttack: () => {
@@ -71,6 +84,10 @@ function startBattle(assets: Assets, scene: SceneHandle, rig: CameraRig): void {
       switchWeapon(app.battle, app.selectedId);
     },
     onPause: () => setPaused(true),
+    onToggleLanguage: () => {
+      toggleLanguage();
+      rebuildUi();
+    },
     onMinimapClick: (x, z) => rig.focus(x, z),
     onMinimapOrder: (x, z) => {
       if (!app || app.selectedId === null) return;
@@ -88,12 +105,41 @@ function startBattle(assets: Assets, scene: SceneHandle, rig: CameraRig): void {
     onResume: () => setPaused(false),
   });
 
+  const structures = createStructureView(scene.scene);
+  structures.sync(battle.structures);
+
+  const buildBar = createBuildBar({
+    onPick: () => {
+      /* Auswahl wird in der Leiste gefuehrt; der Klick aufs Feld setzt. */
+    },
+    onStartBattle: () => {
+      if (!app) return;
+      startBattlePhase(app.battle);
+      buildBar.hide();
+      app.structures.sync(app.battle.structures);
+    },
+  });
+
+  return { hud, overlays, buildBar, structures };
+}
+
+function startBattle(assets: Assets, scene: SceneHandle, rig: CameraRig): void {
+  const battle = createBattle(Date.now() % 100000);
+  const view = createBattleView(scene, assets, battle);
+
+  const { hud, overlays, buildBar, structures } = buildUi(battle, scene, rig, view);
+
   const root = uiRoot();
   root.innerHTML = '';
   root.appendChild(hud.root);
+  root.appendChild(buildBar.root);
   root.appendChild(overlays.root);
 
-  app = { battle, scene, rig, view, hud, overlays, selectedId: null, paused: true, clock: 0 };
+  app = {
+    battle, scene, rig, view, hud, overlays,
+    selectedId: null, paused: true, clock: 0,
+    structures, buildBar,
+  };
   // Debug-Handle fuer automatisierte Pruefung (Screenshots, Steuerungstests).
   (window as unknown as { __fb: unknown }).__fb = {
     get state() {
@@ -162,11 +208,53 @@ function startBattle(assets: Assets, scene: SceneHandle, rig: CameraRig): void {
       app.clock = app.battle.time;
       app.hud.update(app.battle, app.selectedId);
       app.hud.setTime(app.clock);
+      app.structures.sync(app.battle.structures);
+      app.structures.update(0.3);
+      syncBuildPhase(app);
       app.scene.renderer.render(app.scene.scene, app.scene.camera);
       return app.battle.time;
     },
   };
   overlays.showBriefing();
+}
+
+/**
+ * Bauphase und Schlacht sauber umschalten: Bauleiste zeigen/verstecken,
+ * Anlagen nachziehen. Wird jeden Bildlauf aufgerufen und ist deshalb
+ * idempotent.
+ */
+function syncBuildPhase(current: NonNullable<typeof app>): void {
+  const building = current.battle.phase === 'build';
+  current.hud.root.classList.toggle('building', building);
+  if (building) {
+    current.buildBar.show();
+    current.buildBar.update(current.battle);
+  } else {
+    current.buildBar.hide();
+    current.structures.sync(current.battle.structures);
+  }
+}
+
+/**
+ * Oberflaeche neu aufbauen. Wird beim Sprachwechsel gebraucht: die Texte
+ * werden beim Erzeugen gesetzt, deshalb muessen HUD und Overlays neu entstehen.
+ * Die Schlacht selbst bleibt unangetastet.
+ */
+function rebuildUi(): void {
+  if (!app) return;
+  const { battle, scene, rig, view, selectedId, paused } = app;
+  const root = uiRoot();
+  root.innerHTML = '';
+  const built = buildUi(battle, scene, rig, view);
+  root.appendChild(built.hud.root);
+  root.appendChild(built.overlays.root);
+  app.hud = built.hud;
+  app.overlays = built.overlays;
+  app.selectedId = selectedId;
+  app.paused = paused;
+  app.hud.update(battle, selectedId);
+  app.hud.setTime(app.clock);
+  if (paused) app.overlays.showPause();
 }
 
 function selectPlatoon(id: number): void {
@@ -232,6 +320,24 @@ function bindInput(canvas: HTMLCanvasElement, rig: CameraRig): void {
     const rect = canvas.getBoundingClientRect();
     const wx = app.view.screenToWorld(e.clientX - rect.left, e.clientY - rect.top);
 
+    // Bauphase: Linksklick setzt die gewaehlte Anlage, Rechtsklick bricht ab.
+    if (app.battle.phase === 'build') {
+      const picked = app.buildBar.selected();
+      if (e.button === 2) {
+        app.buildBar.selected();
+        return;
+      }
+      if (picked === null) return;
+      const error = buildStructure(app.battle, 'player', picked, wx.x, wx.z);
+      if (error !== null) {
+        app.buildBar.flash(t(error));
+      } else {
+        app.structures.sync(app.battle.structures);
+        app.buildBar.update(app.battle);
+      }
+      return;
+    }
+
     if (e.button === 0) {
       const own = platoonAt(app.battle, wx.x, wx.z, 'player');
       if (own) selectPlatoon(own.id);
@@ -245,6 +351,95 @@ function bindInput(canvas: HTMLCanvasElement, rig: CameraRig): void {
     else issueMove(app.battle, app.selectedId, wx.x, wx.z);
     app.view.showMoveMarker(wx.x, wx.z);
   });
+
+  // ------------------------------------------------------------- Touch-Bedienung
+  // Auf dem Handy gibt es keinen Rechtsklick. Regeln:
+  //   kurzer Tipp auf eigenen Trupp  -> auswaehlen
+  //   kurzer Tipp auf Feindtrupp     -> angreifen (wenn ein Trupp gewaehlt ist)
+  //   kurzer Tipp auf freies Feld    -> Marschbefehl
+  //   zwei Finger                    -> Kamera ziehen
+  // Damit kommt man mit einem Finger aus.
+  let touchStart: { x: number; y: number; time: number } | null = null;
+  let touchMoved = false;
+
+  const worldAt = (clientX: number, clientY: number): { x: number; z: number } | null => {
+    if (!app) return null;
+    const rect = canvas.getBoundingClientRect();
+    return app.view.screenToWorld(clientX - rect.left, clientY - rect.top);
+  };
+
+  canvas.addEventListener('touchstart', (e) => {
+    if (e.touches.length === 2) {
+      const a = e.touches[0];
+      const b = e.touches[1];
+      rig.beginPan((a.clientX + b.clientX) / 2, (a.clientY + b.clientY) / 2);
+      touchStart = null;
+      e.preventDefault();
+      return;
+    }
+    const t0 = e.touches[0];
+    touchStart = { x: t0.clientX, y: t0.clientY, time: Date.now() };
+    touchMoved = false;
+  }, { passive: true });
+
+  canvas.addEventListener('touchmove', (e) => {
+    if (e.touches.length === 2) {
+      const a = e.touches[0];
+      const b = e.touches[1];
+      rig.panTo((a.clientX + b.clientX) / 2, (a.clientY + b.clientY) / 2);
+      e.preventDefault();
+      return;
+    }
+    if (!touchStart) return;
+    const t0 = e.touches[0];
+    if (Math.hypot(t0.clientX - touchStart.x, t0.clientY - touchStart.y) > 14) touchMoved = true;
+  }, { passive: true });
+
+  canvas.addEventListener('touchend', (e) => {
+    if (e.touches.length === 0) rig.endPan();
+    if (!touchStart || touchMoved) {
+      touchStart = null;
+      return;
+    }
+    const held = Date.now() - touchStart.time;
+    const at = worldAt(touchStart.x, touchStart.y);
+    touchStart = null;
+    if (!app || app.paused || isBlocked() || !at) return;
+    if (held > 700) return; // langes Halten ist kein Befehl
+
+    // Bauphase: Tippen setzt die gewaehlte Anlage.
+    if (app.battle.phase === 'build') {
+      const pickedKind = app.buildBar.selected();
+      if (pickedKind === null) return;
+      const buildError = buildStructure(app.battle, 'player', pickedKind, at.x, at.z);
+      if (buildError !== null) app.buildBar.flash(t(buildError));
+      else {
+        app.structures.sync(app.battle.structures);
+        app.buildBar.update(app.battle);
+      }
+      return;
+    }
+
+    // 1. Eigener Trupp getroffen -> auswaehlen.
+    const own = platoonAt(app.battle, at.x, at.z, 'player');
+    if (own) {
+      selectPlatoon(own.id);
+      return;
+    }
+
+    // 2. Feindtrupp getroffen -> angreifen.
+    if (app.selectedId !== null) {
+      const enemy = platoonAt(app.battle, at.x, at.z, 'enemy');
+      if (enemy) {
+        issueAttack(app.battle, app.selectedId, enemy.id);
+        app.view.showMoveMarker(at.x, at.z);
+        return;
+      }
+      // 3. Freies Feld -> Marschbefehl.
+      issueMove(app.battle, app.selectedId, at.x, at.z);
+      app.view.showMoveMarker(at.x, at.z);
+    }
+  }, { passive: true });
 
   const frame = (dt: number) => rig.update(dt, keys);
   inputFrame = frame;
@@ -284,6 +479,8 @@ async function boot(): Promise<void> {
       app.view.update(dt, events);
       app.hud.update(app.battle, app.selectedId);
       app.hud.setTime(app.clock);
+      app.structures.update(dt);
+      syncBuildPhase(app);
       if (app.battle.status !== 'running') {
         app.overlays.showResult(app.battle.status, app.battle.time);
         app.paused = true;

@@ -81,6 +81,23 @@ export interface Projectile {
   targetId: number;
 }
 
+/**
+ * Bauphase oder Schlacht. Vor der Schlacht gibt es ein Zeitfenster, in dem mit
+ * Rohstoffen Verteidigungsanlagen gebaut werden (#13).
+ */
+export type BattlePhase = 'build' | 'battle';
+
+export type StructureKind = 'wall' | 'palisade' | 'breakwater' | 'tower';
+
+/** Eine gebaute Verteidigungsanlage. */
+export interface Structure {
+  id: number;
+  kind: StructureKind;
+  faction: Faction;
+  x: number;
+  z: number;
+}
+
 export interface Battle {
   platoons: Platoon[];
   projectiles: Projectile[];
@@ -89,6 +106,14 @@ export interface Battle {
   seed: number;
   nextId: number;
   events: BattleEvent[];
+  /** Vor der Schlacht laeuft die Bauphase. */
+  phase: BattlePhase;
+  /** Restzeit der Bauphase in Sekunden. */
+  buildTimeLeft: number;
+  /** Rohstoffe je Seite. */
+  resources: Record<Faction, number>;
+  /** Gebaute Anlagen beider Seiten. */
+  structures: Structure[];
 }
 
 export type BattleEvent =
@@ -96,4 +121,6 @@ export type BattleEvent =
   | { type: 'death'; soldierId: number; x: number; z: number; faction: Faction }
   | { type: 'shot'; fromX: number; fromZ: number; toX: number; toZ: number; faction: Faction }
   | { type: 'morale'; platoonId: number }
-  | { type: 'end'; status: 'victory' | 'defeat' };
+  | { type: 'end'; status: 'victory' | 'defeat' }
+  | { type: 'build'; kind: StructureKind; x: number; z: number; faction: Faction }
+  | { type: 'phase'; phase: BattlePhase };

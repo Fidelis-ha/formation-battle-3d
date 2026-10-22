@@ -209,6 +209,18 @@ function startBattle(
     get battle() {
       return app?.battle ?? null;
     },
+    // Gewaehlter Gegner und sein Gehirn — fuer die Abnahme der Gegnerauswahl.
+    get opponent() {
+      return app?.opponent ?? null;
+    },
+    get enemyBrain() {
+      return app?.enemyBrain ?? null;
+    },
+    get campaign() {
+      return app?.campaign ?? false;
+    },
+    // Auswahl oeffnen (fuer Pruefung und Kampagnen-Neustart).
+    openSelector: () => app?.selector.show(),
     // Bildschirmpunkt eines Weltpunkts, ueber die echte Kamera projiziert.
     // Damit lassen sich Klicks praezise pruefen, ohne Koordinaten zu raten.
     project: (x: number, z: number) => {
@@ -261,11 +273,29 @@ function startBattle(
       app.structures.sync(app.battle.structures);
       app.structures.update(0.3);
       syncBuildPhase(app);
+      syncCampaign();
       app.scene.renderer.render(app.scene.scene, app.scene.camera);
       return app.battle.time;
     },
   };
   overlays.showBriefing();
+}
+
+/**
+ * Kampagnen-Fortschritt pruefen und ggf. weiterschalten.
+ *
+ * Wird aus der Hauptschleife UND aus `advance()` aufgerufen. Vorher stand die
+ * Logik nur in der Hauptschleife — im Testbetrieb (der `advance()` benutzt)
+ * wurde ein Sieg deshalb nie verbucht, und der Fortschritt blieb auf 0.
+ */
+function syncCampaign(): void {
+  if (!app) return;
+  if (app.battle.status !== 'running') {
+    if (app.campaign && app.battle.status === 'victory' && !campaignAdvanced) {
+      campaignAdvanced = true;
+      app.selector.advanceCampaign();
+    }
+  }
 }
 
 /**
@@ -559,12 +589,8 @@ async function boot(): Promise<void> {
       if (app.battle.status !== 'running') {
         app.overlays.showResult(app.battle.status, app.battle.time);
         app.paused = true;
-        // Kampagne: ein Sieg schaltet den naechsten Gegner frei. Genau einmal
-        // pro Schlacht, deshalb ueber ein Merkmal am Ergebnis gesichert.
-        if (app.campaign && app.battle.status === 'victory' && !campaignAdvanced) {
-          campaignAdvanced = true;
-          app.selector.advanceCampaign();
-        }
+        // Kampagne: ein Sieg schaltet den naechsten Gegner frei.
+        syncCampaign();
       }
     }
     inputFrame?.(dt);

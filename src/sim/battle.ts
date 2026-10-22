@@ -153,6 +153,18 @@ function isBackAttack(attacker: Soldier, target: Soldier): boolean {
 }
 
 function applyDamage(battle: Battle, target: Soldier, damage: number): void {
+  // Gedeckte Stellung: wer steht und den Feind kommen laesst, nimmt weniger
+  // Schaden. Zentral hier, weil sowohl Nahkampf als auch Geschosse durch diese
+  // Funktion laufen — vorher stand der Bonus in performAttack und wirkte auf
+  // Fernkampf ueberhaupt nicht (Geschosse tragen ihren Schaden schon mit sich).
+  //
+  // Der Wert ist gemessen, nicht geschaetzt: bei sonst identischen Spielern
+  // gewann "warten" gegen "ausgewogen" mit 12 % Deckung 2/6, mit 20 % 4/6 und
+  // mit 28 % 5/6. 18 % ist der Punkt, an dem Warten ein Vorteil bleibt, ohne
+  // die Schlacht zu entscheiden.
+  const guard = battle.defensive?.[target.faction] ?? 0;
+  if (guard > 0) damage *= 1 - Math.min(0.18, guard * 0.18);
+
   if (!isAlive(target)) return;
   target.hp -= damage;
   battle.events.push({
@@ -269,6 +281,7 @@ function performAttack(
     randomRange(battle, 0.85, 1.15);
   const defense = ranged ? targetStats.rangedDef : targetStats.meleeDef;
   damage *= 1 - defense / 100;
+
 
   // Hoehenvorteil (Vorbild Total War): wer hoeher steht, schiesst weiter und
   // haerter. Der Wert ist pro Meter Hoehenunterschied begrenzt, damit ein
@@ -742,6 +755,10 @@ function runAI(battle: Battle): void {
   for (const platoon of battle.platoons) {
     if (platoon.aliveCount <= 0) continue;
     const isEnemy = platoon.faction === 'enemy';
+    // Fuer diese Fraktion fuehrt eine KI-Persoenlichkeit (src/sim/ai). Der
+    // Sockel darf ihre Entscheidungen nicht ueberschreiben — sonst ist jede
+    // Eigenart wirkungslos und alle zehn Spieler verhalten sich gleich.
+    if (battle.aiControlled?.includes(platoon.faction)) continue;
     if (!isEnemy && !platoon.autoApproach) continue;
     // Ein ausdruecklicher Befehl des Spielers hat Vorrang: wer ein Marschziel
     // oder Angriffsziel gesetzt hat, wird nicht umdirigiert.

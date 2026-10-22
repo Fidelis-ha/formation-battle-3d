@@ -114,6 +114,21 @@ export interface Battle {
   resources: Record<Faction, number>;
   /** Gebaute Anlagen beider Seiten. */
   structures: Structure[];
+
+  /** Fraktionen, die von einer KI-Persoenlichkeit gefuehrt werden. */
+  aiControlled?: Faction[];
+
+  /**
+   * Fraktionen in Verteidigungsstellung (0..1 je Fraktion).
+   *
+   * Wer steht und den Feind kommen laesst, wehrt sich aus einer gedeckten
+   * Stellung: weniger Schaden, mehr Wirkung. Ohne das ist Warten immer ein
+   * reiner Nachteil — gemessen: eine wartende Armee verlor 0:65 gegen eine
+   * gleich starke, die sofort angriff. Damit waeren alle Warte-Persoenlichkeiten
+   * strukturell geschlagen und die Stufenordnung haette nichts mit Spielweise
+   * zu tun.
+   */
+  defensive?: Partial<Record<Faction, number>>;
 }
 
 export type BattleEvent =

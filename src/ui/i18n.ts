@@ -152,6 +152,18 @@ const TEXTS: Dict = {
   buildTooClose: { en: 'Too close to another structure', de: 'Zu nah an einer anderen Anlage' },
   buildInFormation: { en: 'Too close to your own troops', de: 'Zu nah an den eigenen Truppen' },
   buildOnlyInPhase: { en: 'Building is over', de: 'Die Bauphase ist vorbei' },
+  // Gegnerauswahl und Kampagne (#16)
+  chooseOpponent: { en: 'Choose your opponent', de: 'Gegner waehlen' },
+  chooseOpponentHint: {
+    en: 'Ten commanders, each with their own habit. Pick one for a single battle, or run the campaign.',
+    de: 'Zehn Befehlshaber, jeder mit eigener Eigenart. Einen fuer eine einzelne Schlacht waehlen, oder die Kampagne spielen.',
+  },
+  campaignProgress: { en: 'Campaign', de: 'Kampagne' },
+  campaignStart: { en: 'Start campaign', de: 'Kampagne starten' },
+  campaignContinue: { en: 'Continue campaign', de: 'Kampagne fortsetzen' },
+  campaignReset: { en: 'Reset', de: 'Zuruecksetzen' },
+  opponent: { en: 'Opponent', de: 'Gegner' },
+
 };
 
 let current: Lang = 'en';

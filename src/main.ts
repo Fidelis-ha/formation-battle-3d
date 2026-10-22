@@ -19,6 +19,9 @@ import { createHud, type Hud } from './ui/hud';
 import { createOverlays, type Overlays } from './ui/overlays';
 import { createBuildBar, type BuildBar } from './ui/buildbar';
 import { createStructureView, type StructureView } from './render/structures';
+import { createSelector, type Selector } from './ui/selector';
+import { personalityById, PERSONALITIES, type Personality } from './sim/ai/personality';
+import { assignReserve, createBrain, think, type BrainState } from './sim/ai/brain';
 import { buildStructure, startBattlePhase } from './sim/battle';
 import { initLanguage, t, toggleLanguage } from './ui/i18n';
 
@@ -39,7 +42,23 @@ interface App {
   structures: StructureView;
   /** Bauleiste (nur in der Bauphase sichtbar). */
   buildBar: BuildBar;
+  /** Gegnerauswahl und Kampagne. */
+  selector: Selector;
+  /** Gewaehlter Gegner (Persoenlichkeit). */
+  opponent: Personality;
+  /** Gehirn des Gegners, falls gesetzt. */
+  enemyBrain: BrainState | null;
+  /** Laeuft gerade eine Kampagne? */
+  campaign: boolean;
 }
+
+/** Damit ein Sieg den Kampagnen-Fortschritt nur einmal weiterschaltet. */
+let campaignAdvanced = false;
+
+/** Gemerkte Bausteine fuer einen Neustart gegen einen anderen Gegner. */
+let assetsRef: Assets | null = null;
+let sceneRef: SceneHandle | null = null;
+let rigRef: CameraRig | null = null;
 
 let app: App | null = null;
 
@@ -68,7 +87,7 @@ function buildUi(
   scene: SceneHandle,
   rig: CameraRig,
   view: BattleView,
-): { hud: Hud; overlays: Overlays; buildBar: BuildBar; structures: StructureView } {
+): { hud: Hud; overlays: Overlays; buildBar: BuildBar; structures: StructureView; selector: Selector } {
   const hud = createHud({
     onSelectPlatoon: (id) => selectPlatoon(id),
     onToggleAutoAttack: () => {
@@ -120,25 +139,56 @@ function buildUi(
     },
   });
 
-  return { hud, overlays, buildBar, structures };
+  const selector = createSelector({
+    onPick: (personality) => {
+      // Freies Spiel: neue Schlacht gegen den gewaehlten Gegner.
+      if (!app) return;
+      restartAgainst(personality, false);
+    },
+    onCampaign: (personality, progress) => {
+      if (!app) return;
+      void progress;
+      restartAgainst(personality, true);
+    },
+  });
+
+  return { hud, overlays, buildBar, structures, selector };
 }
 
-function startBattle(assets: Assets, scene: SceneHandle, rig: CameraRig): void {
+function startBattle(
+  assets: Assets,
+  scene: SceneHandle,
+  rig: CameraRig,
+  opponent: Personality,
+  campaign: boolean,
+): void {
+  campaignAdvanced = false;
+  // Fuer einen Neustart gegen einen anderen Gegner merken.
+  assetsRef = assets;
+  sceneRef = scene;
+  rigRef = rig;
   const battle = createBattle(Date.now() % 100000);
   const view = createBattleView(scene, assets, battle);
 
-  const { hud, overlays, buildBar, structures } = buildUi(battle, scene, rig, view);
+  // Der gewaehlte Gegner uebernimmt die feindliche Fraktion: seine
+  // Persoenlichkeit fuehrt, der Sockel schweigt fuer diese Seite.
+  battle.aiControlled = ['enemy'];
+  const enemyBrain = createBrain(opponent, 'enemy', battle.seed);
+  assignReserve(battle, enemyBrain);
+
+  const { hud, overlays, buildBar, structures, selector } = buildUi(battle, scene, rig, view);
 
   const root = uiRoot();
   root.innerHTML = '';
   root.appendChild(hud.root);
   root.appendChild(buildBar.root);
   root.appendChild(overlays.root);
+  root.appendChild(selector.root);
 
   app = {
     battle, scene, rig, view, hud, overlays,
     selectedId: null, paused: true, clock: 0,
-    structures, buildBar,
+    structures, buildBar, selector, opponent, enemyBrain, campaign,
   };
   // Debug-Handle fuer automatisierte Pruefung (Screenshots, Steuerungstests).
   (window as unknown as { __fb: unknown }).__fb = {
@@ -216,6 +266,18 @@ function startBattle(assets: Assets, scene: SceneHandle, rig: CameraRig): void {
     },
   };
   overlays.showBriefing();
+}
+
+/**
+ * Neue Schlacht gegen einen gewaehlten Gegner starten.
+ *
+ * Baut Szene und UI komplett neu auf: der Gegner ist eine andere
+ * Persoenlichkeit, seine Truppen und sein Gehirn muessen frisch sein.
+ */
+function restartAgainst(opponent: Personality, campaign: boolean): void {
+  if (!assetsRef || !sceneRef || !rigRef) return;
+  app = null;
+  startBattle(assetsRef, sceneRef, rigRef, opponent, campaign);
 }
 
 /**
@@ -468,7 +530,10 @@ async function boot(): Promise<void> {
   bindInput(canvas, rig);
 
   const assets = await loadAssets();
-  startBattle(assets, scene, rig);
+  // Zuerst die Gegnerauswahl zeigen. Ohne Auswahl startet das Spiel gegen den
+  // ersten Gegner, damit ein Klick weniger genuegt.
+  startBattle(assets, scene, rig, PERSONALITIES[0], false);
+  app?.selector.show();
 
   const clock = new THREE.Clock();
   let last = 0;
@@ -477,6 +542,10 @@ async function boot(): Promise<void> {
     last += dt;
     if (app) {
       if (!app.paused && app.battle.status === 'running') {
+        // Der Gegner denkt: seine Persoenlichkeit setzt Ziele und Marschwege,
+        // der Sockel fuehrt sie aus. Ohne diesen Aufruf spielt der Gegner die
+        // alte Einheits-KI und die Eigenart waere unsichtbar.
+        if (app.enemyBrain) think(app.battle, app.enemyBrain);
         step(app.battle, dt);
         app.clock = app.battle.time;
       }
@@ -490,6 +559,12 @@ async function boot(): Promise<void> {
       if (app.battle.status !== 'running') {
         app.overlays.showResult(app.battle.status, app.battle.time);
         app.paused = true;
+        // Kampagne: ein Sieg schaltet den naechsten Gegner frei. Genau einmal
+        // pro Schlacht, deshalb ueber ein Merkmal am Ergebnis gesichert.
+        if (app.campaign && app.battle.status === 'victory' && !campaignAdvanced) {
+          campaignAdvanced = true;
+          app.selector.advanceCampaign();
+        }
       }
     }
     inputFrame?.(dt);

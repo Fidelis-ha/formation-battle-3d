@@ -299,17 +299,24 @@ export function isPassable(x: number, z: number): boolean {
  * laufen, sollen daran entlang rutschen statt zu kleben.
  */
 export function nudgePassable(x: number, z: number, radius = 6): { x: number; z: number } {
-  if (isPassable(x, z)) return { x, z };
-  // Ringweise nach aussen suchen.
+  // Immer innerhalb der Karte bleiben. Vorher fuehrte die Suche Truppen bis
+  // an den Kartenrand, weil auch Punkte ausserhalb als "passierbar" galten.
+  const limit = FIELD_HALF - 4;
+  const cx = Math.max(-limit, Math.min(limit, x));
+  const cz = Math.max(-limit, Math.min(limit, z));
+
+  if (isPassable(cx, cz)) return { x: cx, z: cz };
+  // Ringweise nach aussen suchen — aber nicht ueber den Kartenrand hinaus.
   for (let r = 0.8; r <= radius; r += 0.8) {
     for (let i = 0; i < 12; i++) {
       const a = (i / 12) * Math.PI * 2;
-      const nx = x + Math.cos(a) * r;
-      const nz = z + Math.sin(a) * r;
+      const nx = cx + Math.cos(a) * r;
+      const nz = cz + Math.sin(a) * r;
+      if (Math.abs(nx) > limit || Math.abs(nz) > limit) continue;
       if (isPassable(nx, nz)) return { x: nx, z: nz };
     }
   }
-  return { x, z };
+  return { x: cx, z: cz };
 }
 
 /**

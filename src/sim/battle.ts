@@ -9,6 +9,7 @@ import type {
   UnitKind,
 } from './types';
 import { counterMultiplier, UNIT_STATS } from './units';
+import { heightAt, isForest, isPassable, isWater, slopeAt, nudgePassable } from './terrain';
 
 const WORLD_HALF = 60;
 const MELEE_RANGE = 1.6;
@@ -198,7 +199,10 @@ function chooseTarget(
   // Kontakt-Toleranz: Soldaten bleiben durch das Raster leicht ausserhalb der
   // exakten Reichweite stehen (1.62 m bei 1.6 m). Ohne diese Toleranz greift
   // die Front nie an und die Schlacht bleibt stehen.
-  const reach = weapon.range + CONTACT_TOLERANCE;
+  // Hoehenvorteil erweitert das Schussfeld: von oben sieht man weiter.
+  const ownHeight = heightAt(soldier.x, soldier.z);
+  const heightBonus = weapon.ranged ? Math.min(6, Math.max(0, ownHeight) * 0.45) : 0;
+  const reach = weapon.range + CONTACT_TOLERANCE + heightBonus;
   const rangeSq = reach * reach;
   // Zuerst das vom Spieler befohlene Ziel, dann das von Auto Approach
   // gewaehlte. Vorher wurde nur targetPlatoonId geprueft — dadurch ignorierten
@@ -254,6 +258,16 @@ function performAttack(
     randomRange(battle, 0.85, 1.15);
   const defense = ranged ? targetStats.rangedDef : targetStats.meleeDef;
   damage *= 1 - defense / 100;
+
+  // Hoehenvorteil (Vorbild Total War): wer hoeher steht, schiesst weiter und
+  // haerter. Der Wert ist pro Meter Hoehenunterschied begrenzt, damit ein
+  // Huegel ein Vorteil bleibt und keine Entscheidung.
+  const heightDiff = heightAt(attacker.x, attacker.z) - heightAt(target.x, target.z);
+  if (ranged && heightDiff > 0.5) {
+    damage *= 1 + Math.min(0.35, heightDiff * 0.035);
+  } else if (ranged && heightDiff < -0.5) {
+    damage *= 1 - Math.min(0.2, -heightDiff * 0.02);
+  }
 
   if (isBackAttack(attacker, target)) damage *= 1.5;
 
@@ -348,8 +362,58 @@ function movePlatoons(battle: Battle, dt: number): void {
       }
     }
 
-    platoon.x = clamp(platoon.x, -WORLD_HALF, WORLD_HALF);
-    platoon.z = clamp(platoon.z, -WORLD_HALF, WORLD_HALF);
+    // Truppen halten Abstand zueinander. Ohne das stapeln sich mehrere Trupps
+    // auf demselben Punkt (alle laufen auf denselben Feind zu), die Soldaten
+    // stehen ineinander und keiner kommt in Reichweite — die Schlacht steht.
+    for (const other of battle.platoons) {
+      if (other === platoon || other.aliveCount <= 0) continue;
+      if (other.faction !== platoon.faction) continue;
+      const dx = platoon.x - other.x;
+      const dz = platoon.z - other.z;
+      const d = Math.hypot(dx, dz);
+      const minGap = 5.5;
+      if (d > 1e-6 && d < minGap) {
+        const push = (minGap - d) * 0.5;
+        platoon.x += (dx / d) * push;
+        platoon.z += (dz / d) * push;
+      }
+    }
+
+    // Truppbewegung ueber unpassierbares Gelaende: an der Klippe entlang
+    // rutschen statt dagegen zu laufen.
+    const safe = nudgePassable(platoon.x, platoon.z);
+    platoon.x = clamp(safe.x, -WORLD_HALF, WORLD_HALF);
+    platoon.z = clamp(safe.z, -WORLD_HALF, WORLD_HALF);
+
+    // Der Truppmittelpunkt darf den Soldaten nicht davonlaufen. Vorher bewegte
+    // er sich mit voller Geschwindigkeit, waehrend das Gelaende die Soldaten
+    // bremste — nach einigen Sekunden stand der Mittelpunkt am Kartenrand und
+    // die Soldaten weit dahinter, die Schlacht lief nie zu Ende.
+    // Korrektur: bleibt der Schwerpunkt der Soldaten zu weit zurueck, wird der
+    // Mittelpunkt nachgezogen.
+    let cx = 0;
+    let cz = 0;
+    let n = 0;
+    for (const soldier of platoon.soldiers) {
+      if (!isAlive(soldier)) continue;
+      cx += soldier.x;
+      cz += soldier.z;
+      n += 1;
+    }
+    if (n > 0) {
+      cx /= n;
+      cz /= n;
+      const drift = Math.hypot(cx - platoon.x, cz - platoon.z);
+      const limit = formationWidth(stats.squad) + FORMATION_SPACING * 2;
+      if (drift > limit) {
+        // Nur so weit nachziehen, dass die Formation wieder zusammenpasst.
+        const pull = drift - limit;
+        const ux = (cx - platoon.x) / drift;
+        const uz = (cz - platoon.z) / drift;
+        platoon.x += ux * pull;
+        platoon.z += uz * pull;
+      }
+    }
   }
 }
 
@@ -374,6 +438,22 @@ function nearestEnemySoldier(
 // Ein Soldat darf sich hoechstens so weit vom Truppmittelpunkt entfernen.
 // Das haelt die Formation zusammen, laesst aber die vorderen Reihen Kontakt
 // aufnehmen, waehrend die hinteren nachruecken.
+// Gelaende bremst. Werte angelehnt an die Vorbilder (Total War, Bannerlord):
+// Wasser und Unterholz kosten am meisten Tempo, ein Hang je nach Steigung.
+const SPEED_WATER = 0.45;
+const SPEED_FOREST = 0.7;
+const SPEED_SLOPE_FACTOR = 0.22;
+
+/** Tempo-Faktor am Punkt (1 = ungebremst). */
+function terrainSpeedAt(x: number, z: number): number {
+  if (isWater(x, z)) return SPEED_WATER;
+  let f = 1;
+  if (isForest(x, z)) f *= SPEED_FOREST;
+  const slope = slopeAt(x, z);
+  if (slope > 0.12) f *= Math.max(0.35, 1 - (slope - 0.12) * SPEED_SLOPE_FACTOR * 4);
+  return f;
+}
+
 const MAX_LEASH = 9;
 // Wie weit ein Soldat von seinem Rasterplatz hoechstens nach vorne rueckt.
 // Begrenzt, damit die Reihe geschlossen bleibt und nur die Front Kontakt holt.
@@ -389,10 +469,14 @@ function updateSoldiers(battle: Battle, dt: number): void {
     const weapon = weaponFor(platoon);
     const slots = formationSlots(stats.squad);
 
-    // Gegnertrupp, auf den dieser Trupp zielt (falls einer zugewiesen ist).
+    // Gegnertrupp, auf den dieser Trupp zielt. Beide Quellen zaehlen:
+    // Spielerbefehl (playerTargetId) und Automatik (autoTargetId). Vorher
+    // wurde nur targetPlatoonId gelesen — dadurch ignorierten alle Truppen
+    // ihre Automatik und nur die Frontreihe kaempfte.
+    const engagedId = platoon.playerTargetId ?? platoon.autoTargetId;
     const engaged =
-      platoon.targetPlatoonId !== null && !platoon.moraleBroken
-        ? platoonById(battle, platoon.targetPlatoonId)
+      engagedId !== null && !platoon.moraleBroken
+        ? platoonById(battle, engagedId)
         : undefined;
 
     // Formation schliesst auf: faellt die Frontreihe, ruecken die Ueberlebenden
@@ -465,10 +549,21 @@ function updateSoldiers(battle: Battle, dt: number): void {
       const oldZ = soldier.z;
       let moved = false;
       if (d > 0.02) {
-        const stepDist = Math.min(stats.speed * dt, d);
-        soldier.x += (dx / d) * stepDist;
-        soldier.z += (dz / d) * stepDist;
-        moved = stepDist > 1e-6;
+        // Tempo haengt vom Untergrund ab (Fluss, Wald, Hang).
+        const terrain = terrainSpeedAt(soldier.x, soldier.z);
+        const stepDist = Math.min(stats.speed * terrain * dt, d);
+        const nextX = soldier.x + (dx / d) * stepDist;
+        const nextZ = soldier.z + (dz / d) * stepDist;
+        // Klippen und Wasser sperren: der Soldat bleibt stehen, statt
+        // hindurchzulaufen. Eine Truppe kann so nicht ueber eine Klippe
+        // steigen — genau der Punkt aus dem Auftrag.
+        if (isPassable(nextX, nextZ) || isWater(nextX, nextZ)) {
+          soldier.x = nextX;
+          soldier.z = nextZ;
+          moved = stepDist > 1e-6;
+        } else {
+          moved = false;
+        }
       }
       const realDist = Math.hypot(soldier.x - oldX, soldier.z - oldZ);
       r.speeds.set(soldier.id, dt > 0 ? realDist / dt : 0);
@@ -595,8 +690,10 @@ function runAI(battle: Battle): void {
       if (nearest) {
         // Kein Gegner in Sicht heisst nicht "stehen bleiben": auf den
         // naechstgelegenen Feind zumarschieren, bis er in Sicht kommt.
+        // Das Ziel wird auf passierbares Gelaende gelegt, sonst laufen die
+        // Truppen in Waende und Kartenraender.
         platoon.autoTargetId = nearest.id;
-        platoon.autoMoveTo = { x: nearest.x, z: nearest.z };
+        platoon.autoMoveTo = nudgePassable(nearest.x, nearest.z, 12);
       } else {
         platoon.autoTargetId = null;
         platoon.autoMoveTo = null;
@@ -606,8 +703,13 @@ function runAI(battle: Battle): void {
 
     platoon.autoTargetId = best.id;
 
+    // Marschziel auf einen PASSIERBAREN Punkt legen. Vorher liefen Truppen
+    // quer durch Wald und Klippen bis an den Kartenrand und blieben dort
+    // haengen, weil ihr Ziel hinter unwegsamem Gelaende lag.
+    const aim = nudgePassable(best.x, best.z, 12);
+
     if (platoon.kind === 'cavalry' && bestDist > 8) {
-      platoon.autoMoveTo = { x: best.x, z: best.z };
+      platoon.autoMoveTo = aim;
       continue;
     }
 
@@ -624,7 +726,7 @@ function runAI(battle: Battle): void {
           z: clamp(platoon.z + nz * 7, -WORLD_HALF, WORLD_HALF),
         };
       } else if (bestDist > stats.range * 0.9) {
-        platoon.autoMoveTo = { x: best.x, z: best.z };
+        platoon.autoMoveTo = aim;
       } else {
         platoon.autoMoveTo = null;
       }
@@ -637,7 +739,7 @@ function runAI(battle: Battle): void {
     // 2.15 m entfernt war und niemand zuschlug.
     const frontGap = nearestGapToPlatoon(platoon, best);
     if (frontGap > weaponReachFor(platoon)) {
-      platoon.autoMoveTo = { x: best.x, z: best.z };
+      platoon.autoMoveTo = aim;
     } else {
       platoon.autoMoveTo = null;
     }

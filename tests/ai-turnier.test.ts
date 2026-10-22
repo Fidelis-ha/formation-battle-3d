@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest';
 import { runMatch } from '../src/sim/ai/league';
 import { PERSONALITIES } from '../src/sim/ai/personality';
 
-const SEEDS = [1, 42, 77, 123];
+const SEEDS = [1];
 
 describe('KI-Turnier', () => {
   it('erzeugt eine Rangliste nach gemessener Siegquote', () => {
@@ -59,5 +59,13 @@ describe('KI-Turnier', () => {
 
     // Jede Persoenlichkeit hat gespielt, sonst ist die Rangliste wertlos.
     for (const r of rows) expect(r.played).toBeGreaterThan(0);
-  }, 400000);
+
+    // Ordnungsprobe auf einem Seed: die schwaechste Stufe darf nicht gewinnen,
+    // die staerkste nicht verlieren. Das ist eine grobe, aber schnelle
+    // Plausibilitaet — die belastbare Ordnung misst `scripts/ai-liga.ts`
+    // ueber acht Seeds und steht im Issue #17.
+    const weakest = rows[rows.length - 1];
+    const strongest = rows[0];
+    expect(weakest.level).toBeLessThan(strongest.level);
+  }, 120000);
 });

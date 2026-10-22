@@ -247,13 +247,19 @@ function rebuildUi(): void {
   root.innerHTML = '';
   const built = buildUi(battle, scene, rig, view);
   root.appendChild(built.hud.root);
+  root.appendChild(built.buildBar.root);
   root.appendChild(built.overlays.root);
   app.hud = built.hud;
   app.overlays = built.overlays;
+  // Die Bauleiste wird ebenfalls neu gebaut — sonst fehlt sie nach einem
+  // Sprachwechsel komplett (ihre Texte entstehen beim Erzeugen).
+  app.buildBar = built.buildBar;
+  app.structures = built.structures;
   app.selectedId = selectedId;
   app.paused = paused;
   app.hud.update(battle, selectedId);
   app.hud.setTime(app.clock);
+  syncBuildPhase(app);
   if (paused) app.overlays.showPause();
 }
 

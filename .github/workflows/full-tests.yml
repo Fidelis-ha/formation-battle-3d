@@ -1,0 +1,27 @@
+name: Volle Simulation
+
+# Die schweren Schlachtsimulationen (zehn Karten, ganze Partien) dauern rund
+# zwei Minuten. Sie laufen deshalb nicht bei jedem Push mit — der Deploy
+# wuerde daran scheitern —, sondern hier: von Hand oder einmal pro Woche.
+#
+# Die schnelle Suite in `deploy.yml` prueft weiterhin die Grundregeln
+# (kein Soldat im Wasser, Damm oeffnet nur seine Stelle, zehn Karten).
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Montags 04:00 UTC — nach dem Wochenende, vor der Arbeitswoche.
+    - cron: '0 4 * * 1'
+
+jobs:
+  full:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+      - run: npx tsc --noEmit
+      - name: Volle Suite inkl. Schlachtsimulationen
+        run: npx vitest run --config vitest.full.config.ts

@@ -12,7 +12,8 @@
 import type { Battle, Faction, Platoon } from '../types';
 import { UNIT_STATS, counterMultiplier } from '../units';
 import type { UnitKind } from '../types';
-import { nudgePassable } from '../terrain';
+import { isPassable, isWater, nudgePassable } from '../terrain';
+import { buildNavField, nextWaypoint, type NavField } from './nav';
 import { PERSONALITIES, type Personality, type TargetDoctrine } from './personality';
 
 /** Ab welcher Naehe ein Ziel als "greifbar" gilt. */
@@ -38,6 +39,16 @@ export interface BrainState {
   decisions: number;
   /** Erster Angriffszeitpunkt, fuer die Verlaufsmessung. */
   firstContact: number | null;
+  /**
+   * Distanzfeld zum Feindzentrum.
+   *
+   * Truppen laufen diesem Feld entlang, solange der Feind weit ist. Ohne das
+   * liefen sie auf Karten mit Wasser geradeaus gegen den See und fanden den
+   * Uebergang nie — gemessen blieben drei von zehn Karten im Zeitlimit haengen.
+   */
+  nav: NavField | null;
+  /** Wann das Feld zuletzt gerechnet wurde (Sekunden). */
+  navAt: number;
 }
 
 /**
@@ -63,6 +74,8 @@ export function createBrain(personality: Personality, faction: Faction, seed: nu
     lastTarget: new Map<number, number>(),
     decisions: 0,
     firstContact: null,
+    nav: null,
+    navAt: -999,
   };
 }
 
@@ -281,7 +294,30 @@ export function think(battle: Battle, brain: BrainState): void {
     // Marschziel auf PASSIERBARES Gelaende legen — nicht mitten in den Feind.
     // Vorher lief der Trupp in den Feindtrupp hinein statt davor stehen zu
     // bleiben; die Soldaten waren nach Sekunden tot und niemand schlug zu.
-    const aim = nudgePassable(target2.x, target2.z, 12);
+    let aim = nudgePassable(target2.x, target2.z, 12);
+
+    // Liegt Wasser oder eine Wand zwischen Trupp und Ziel, ueber das Distanzfeld
+    // umleiten. Ohne das laufen die Truppen geradeaus gegen den See und finden
+    // den Uebergang nie — gemessen blieben dadurch drei von zehn Karten im
+    // Zeitlimit haengen ("Die Furt", "Die Insel", "Die Hochebene").
+    if (!lineClear(battle, platoon, target2)) {
+      // Das Feld haengt am Ziel, nicht am Trupp: viele Trupps teilen sich ein
+      // Ziel, deshalb wird es nur alle zwei Sekunden neu gerechnet.
+      const stale = brain.nav === null || battle.time - brain.navAt > 2;
+      if (stale) {
+        // Eigene Wellenbrecher mitgeben: sonst rechnet die Wegfindung um das
+        // Wasser herum und der Damm bleibt unbenutzt.
+        const own = battle.structures.filter(
+          (s) => s.faction === platoon.faction && s.kind === 'breakwater',
+        );
+        brain.nav = buildNavField(target2.x, target2.z, own);
+        brain.navAt = battle.time;
+      }
+      const step = nextWaypoint(brain.nav, platoon.x, platoon.z);
+      if (step) {
+        aim = step;
+      }
+    }
 
     // Die Zielposition haengt an der Aufstellungslehre.
     const point = approachPoint(platoon, target2, p.formation, own, rnd, aim);
@@ -379,6 +415,29 @@ function approachPoint(
     x: platoon.x + nx * reach + jitter,
     z: platoon.z + nz * reach - jitter,
   };
+}
+
+/**
+ * Ist der Weg von einem Trupp zu einem Punkt frei?
+ *
+ * Geprueft wird in Schritten von 3 m, ob Wasser oder eine Wand dazwischen
+ * liegt. Wasser zaehlt als Sperre — der Wellenbrecher wird hier bewusst nicht
+ * beruecksichtigt, weil er nur waehrend der Bauphase entsteht und das
+ * Distanzfeld sonst staendig neu muesste.
+ */
+function lineClear(battle: Battle, from: Platoon, to: Platoon): boolean {
+  const dx = to.x - from.x;
+  const dz = to.z - from.z;
+  const dist = Math.hypot(dx, dz);
+  if (dist < 1) return true;
+  const steps = Math.ceil(dist / 3);
+  for (let i = 1; i < steps; i++) {
+    const t = i / steps;
+    const x = from.x + dx * t;
+    const z = from.z + dz * t;
+    if (!isPassable(x, z) || isWater(x, z)) return false;
+  }
+  return true;
 }
 
 /** Naechster lebender Feindtrupp. */

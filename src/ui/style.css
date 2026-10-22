@@ -994,11 +994,11 @@ html, body {
 
 .selector-panel {
   width: min(600px, 94vw);
-  max-height: 96vh;
+  max-height: 98vh;
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  padding: 14px 16px 12px;
+  gap: 5px;
+  padding: 11px 14px 10px;
   border-radius: 12px;
   background: linear-gradient(180deg, rgba(26, 34, 51, 0.98), rgba(16, 22, 34, 0.99));
   border: 1px solid rgba(120, 150, 200, 0.35);
@@ -1015,8 +1015,8 @@ html, body {
 
 .selector-subtitle {
   margin: 0;
-  font-size: 11px;
-  line-height: 1.45;
+  font-size: 10px;
+  line-height: 1.35;
   color: #97a6bd;
 }
 
@@ -1024,7 +1024,7 @@ html, body {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 7px 9px;
+  padding: 5px 8px;
   border-radius: 8px;
   background: rgba(40, 52, 74, 0.75);
   border: 1px solid rgba(120, 150, 200, 0.25);
@@ -1052,7 +1052,7 @@ html, body {
 .selector-list {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 2px;
   overflow-y: auto;
   padding-right: 4px;
 }
@@ -1060,8 +1060,8 @@ html, body {
 .selector-card {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 4px 8px;
+  gap: 7px;
+  padding: 3px 7px;
   border-radius: 8px;
   border: 1px solid rgba(120, 150, 200, 0.22);
   background: rgba(38, 50, 72, 0.85);
@@ -1114,4 +1114,58 @@ html, body {
 .selector-close {
   align-self: flex-end;
   font-size: 11px;
+}
+
+/* ------------------------------------------------- Kartenauswahl (#18) */
+/*
+ * Zehn Karten als Reiter ueber der Gegnerliste. Reiter statt Karten, weil
+ * beides zusammen sonst nicht in ein Fenster passt: zehn Karten plus zehn
+ * Gegner waeren zwanzig Zeilen.
+ */
+.selector-maps {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 7px;
+  border-radius: 8px;
+  background: rgba(32, 42, 60, 0.8);
+  border: 1px solid rgba(120, 150, 200, 0.22);
+}
+
+.selector-maps-label {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #8fa0b8;
+  flex: 0 0 auto;
+}
+
+.selector-map-row {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+
+.selector-map-chip {
+  flex: 0 0 auto;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid rgba(120, 150, 200, 0.3);
+  background: rgba(44, 56, 78, 0.9);
+  color: #c3d0e2;
+  font-size: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.selector-map-chip:hover {
+  background: rgba(60, 76, 104, 0.95);
+}
+
+.selector-map-chip--active {
+  background: #ffd843;
+  border-color: #ffd843;
+  color: #1a2233;
+  font-weight: 700;
 }

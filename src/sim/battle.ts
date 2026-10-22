@@ -9,17 +9,31 @@ import type {
   UnitKind,
 } from './types';
 import { counterMultiplier, UNIT_STATS } from './units';
-import { heightAt, isForest, isPassable, isWater, slopeAt, nudgePassable } from './terrain';
+import { heightAt, isForest, isPassable, isWater, slopeAt, nudgePassable, setMap } from './terrain';
+import { MAPS, mapById, startLine, type BattleMap } from './maps';
 import {
   BUILD_PHASE_SECONDS,
   START_RESOURCES,
   STRUCTURE_SPECS,
   blockedByStructure,
+  bridgeAt,
+  bridgeSpanAt,
   enemyBuildPlan,
   placementError,
   towerRangeBonus,
   type StructureKind as BuildKind,
 } from './build';
+
+/**
+ * Darf diese Truppe hier stehen?
+ *
+ * Trockener, nicht zu steiler Boden: ja. Wasser: nur ueber einen eigenen
+ * Wellenbrecher. Das ist die Regel aus dem Auftrag.
+ */
+function waterCrossable(battle: Battle, x: number, z: number, faction: Faction): boolean {
+  if (!isWater(x, z)) return true;
+  return bridgeAt(battle.structures, x, z, faction);
+}
 
 const WORLD_HALF = 60;
 const MELEE_RANGE = 1.6;
@@ -361,7 +375,7 @@ function stepAround(
 
   const free = (px: number, pz: number): boolean => {
     if (blockedByStructure(battle.structures, px, pz, faction)) return false;
-    if (isWater(px, pz)) return true;
+    if (isWater(px, pz)) return bridgeAt(battle.structures, px, pz, faction);
     return isPassable(px, pz);
   };
 
@@ -461,9 +475,16 @@ function movePlatoons(battle: Battle, dt: number): void {
 
     // Truppbewegung ueber unpassierbares Gelaende: an der Klippe entlang
     // rutschen statt dagegen zu laufen.
-    const safe = nudgePassable(platoon.x, platoon.z);
-    platoon.x = clamp(safe.x, -WORLD_HALF, WORLD_HALF);
-    platoon.z = clamp(safe.z, -WORLD_HALF, WORLD_HALF);
+    //
+    // Auf einem eigenen Wellenbrecher gilt das NICHT: dort ist Wasser erlaubt,
+    // und `nudgePassable` wuerde den Trupp zurueck ans Ufer schieben. Genau das
+    // war der Grund, warum eine Armee mit Damm nicht hinueberkam — sie lief auf
+    // den Damm, wurde von hier zurueckgeschoben und pendelte am Ufer.
+    if (!bridgeAt(battle.structures, platoon.x, platoon.z, platoon.faction)) {
+      const safe = nudgePassable(platoon.x, platoon.z);
+      platoon.x = clamp(safe.x, -WORLD_HALF, WORLD_HALF);
+      platoon.z = clamp(safe.z, -WORLD_HALF, WORLD_HALF);
+    }
 
     // Der Truppmittelpunkt darf den Soldaten nicht davonlaufen. Vorher bewegte
     // er sich mit voller Geschwindigkeit, waehrend das Gelaende die Soldaten
@@ -639,7 +660,27 @@ function updateSoldiers(battle: Battle, dt: number): void {
         // steigen — genau der Punkt aus dem Auftrag.
         // Gebaute Anlagen sperren zusaetzlich (Mauer, Palisade, Wellenbrecher).
         const blocked = blockedByStructure(battle.structures, nextX, nextZ, platoon.faction);
-        const terrainOk = isPassable(nextX, nextZ) || isWater(nextX, nextZ);
+        // Wasser ist UNPASSIERBAR. Einzige Ausnahme: an dieser Stelle steht ein
+        // eigener Wellenbrecher. Vorher stand hier `|| isWater(...)` — damit
+        // lief jede Armee durch jeden Fluss und das Gelaende war bedeutungslos.
+        const onBridge = bridgeAt(battle.structures, nextX, nextZ, platoon.faction);
+        // Auf dem Damm ist der Boden das Bauwerk, nicht das Gelaende. Vorher
+        // stand hier `waterOk && isPassable(...)` — auf Wasser ist `isPassable`
+        // aber immer falsch, also konnte niemand den Damm betreten. Genau
+        // deshalb kamen Truppen mit und ohne Wellenbrecher gleich weit.
+        const terrainOk = onBridge || (!isWater(nextX, nextZ) && isPassable(nextX, nextZ));
+        // Soldaten, die seitlich neben dem Damm stehen, sollen nicht im Wasser
+        // waten: der Trupp laeuft in Formation, und die aeusseren Rasterplaetze
+        // liegen breiter als der Uebergang. Wer im Wasser steht, rueckt zurueck
+        // auf den Damm — sonst sieht man eine Armee durch den Fluss waten,
+        // obwohl die Regel sagt, dass Wasser sperrt.
+        if (!onBridge && isWater(soldier.x, soldier.z)) {
+          const nah = nudgePassable(soldier.x, soldier.z);
+          if (!isWater(nah.x, nah.z)) {
+            soldier.x = nah.x;
+            soldier.z = nah.z;
+          }
+        }
         if (!blocked && terrainOk) {
           soldier.x = nextX;
           soldier.z = nextZ;
@@ -653,7 +694,8 @@ function updateSoldiers(battle: Battle, dt: number): void {
             const sx = soldier.x + perpX * stepDist * dir;
             const sz = soldier.z + perpZ * stepDist * dir;
             const sBlocked = blockedByStructure(battle.structures, sx, sz, platoon.faction);
-            if (!sBlocked && (isPassable(sx, sz) || isWater(sx, sz))) {
+            const sOnBridge = bridgeAt(battle.structures, sx, sz, platoon.faction);
+            if (!sBlocked && (sOnBridge || (!isWater(sx, sz) && isPassable(sx, sz)))) {
               soldier.x = sx;
               soldier.z = sz;
               moved = true;
@@ -876,7 +918,12 @@ function checkEnd(battle: Battle): void {
   }
 }
 
-export function createBattle(seed: number = 1): Battle {
+export function createBattle(seed: number = 1, mapId?: string): Battle {
+  // Die Karte bestimmt Gelaende UND Aufstellung. Ohne `setMap` rechnen alle
+  // Gelaendefunktionen weiter gegen die zuletzt gesetzte Karte — bei zehn
+  // Karten waere das ein Fehler, der nur manchmal auffaellt.
+  const map: BattleMap = (mapId ? mapById(mapId) : null) ?? MAPS[0];
+  setMap(map);
   const battle: Battle = {
     platoons: [],
     projectiles: [],
@@ -890,30 +937,27 @@ export function createBattle(seed: number = 1): Battle {
     buildTimeLeft: BUILD_PHASE_SECONDS,
     resources: { player: START_RESOURCES, enemy: START_RESOURCES },
     structures: [],
+    mapId: map.id,
   };
 
-  // Aufstellung wie im Original: eine geschlossene Schlachtlinie, keine
-  // weit auseinandergezogenen Einzeltrupps. Abstand 7 m haelt die Trupps so
-  // nah, dass sie als Linie wirken und sich gegenseitig decken.
-  const xs = [-14, -7, 0, 7, 14];
+  // Aufstellung aus der Karte: fuenf Trupps als geschlossene Linie, Abstand
+  // 7 m. Die Startpositionen stehen im Kartendatensatz, damit die Armeen auf
+  // jeder Karte an einem anderen Ende beginnen koennen.
   const kinds: UnitKind[] = ['archer', 'spearman', 'infantry', 'housecarl', 'cavalry'];
+  const playerLine = startLine(map, 'player');
+  const enemyLine = startLine(map, 'enemy');
 
   for (let side = 0; side < 2; side++) {
     const faction: Faction = side === 0 ? 'player' : 'enemy';
-    // Aufstellung: Beide Armeen stehen auf der freien Flaeche im Sueden der
-    // Karte (z = 20..38). Noerdlich davon liegt der Huegel, noch weiter
-    // noerdlich der Fluss. Der Gegner steht naeher am Huegel, der Spieler
-    // im offenen Feld — das ergibt ein Gefecht mit Anhoehe in Reichweite.
-    // Weiter auseinander als vorher: zwischen den Linien bleibt Platz fuer
-    // die Bauphase (Mauern, Palisaden, Wellenbrecher). Ohne Abstand liegt
-    // jede Anlage im Sperrbereich der Truppen.
-    const z = side === 0 ? 38 : 18;
-    const facing = side === 0 ? Math.PI : 0;
+    const line = side === 0 ? playerLine : enemyLine;
 
     for (let i = 0; i < kinds.length; i++) {
       const kind = kinds[i];
       const stats = UNIT_STATS[kind];
-      const x = side === 0 ? xs[i] : xs[xs.length - 1 - i];
+      const slot = line[i];
+      const x = slot.x;
+      const z = slot.z;
+      const facing = slot.facing;
       const platoon: Platoon = {
         id: battle.nextId++,
         faction,
@@ -1116,7 +1160,17 @@ export function buildStructure(
   if (error !== null) return error;
 
   battle.resources[faction] -= spec.cost;
-  battle.structures.push({ id: battle.nextId++, kind, faction, x, z });
+  // Ein Wellenbrecher haelt seine Spannweite fest: von Ufer zu Ufer. Wegfindung
+  // und Bewegung pruefen danach dieselbe Linie.
+  const span = kind === 'breakwater' ? bridgeSpanAt(x, z) : null;
+  battle.structures.push({
+    id: battle.nextId++,
+    kind,
+    faction,
+    x,
+    z,
+    ...(span ? { span } : {}),
+  });
   battle.events.push({ type: 'build', kind, x, z, faction });
   return null;
 }

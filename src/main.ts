@@ -21,6 +21,7 @@ import { createBuildBar, type BuildBar } from './ui/buildbar';
 import { createStructureView, type StructureView } from './render/structures';
 import { createSelector, type Selector } from './ui/selector';
 import { personalityById, PERSONALITIES, type Personality } from './sim/ai/personality';
+import { MAPS, type BattleMap } from './sim/maps';
 import { assignReserve, createBrain, think, type BrainState } from './sim/ai/brain';
 import { buildStructure, startBattlePhase } from './sim/battle';
 import { initLanguage, t, toggleLanguage } from './ui/i18n';
@@ -140,15 +141,16 @@ function buildUi(
   });
 
   const selector = createSelector({
-    onPick: (personality) => {
-      // Freies Spiel: neue Schlacht gegen den gewaehlten Gegner.
+    onPick: (personality, map) => {
+      // Freies Spiel: neue Schlacht gegen den gewaehlten Gegner auf der
+      // gewaehlten Karte.
       if (!app) return;
-      restartAgainst(personality, false);
+      restartAgainst(personality, false, map);
     },
-    onCampaign: (personality, progress) => {
+    onCampaign: (personality, progress, map) => {
       if (!app) return;
       void progress;
-      restartAgainst(personality, true);
+      restartAgainst(personality, true, map);
     },
   });
 
@@ -161,13 +163,14 @@ function startBattle(
   rig: CameraRig,
   opponent: Personality,
   campaign: boolean,
+  map: BattleMap,
 ): void {
   campaignAdvanced = false;
   // Fuer einen Neustart gegen einen anderen Gegner merken.
   assetsRef = assets;
   sceneRef = scene;
   rigRef = rig;
-  const battle = createBattle(Date.now() % 100000);
+  const battle = createBattle(Date.now() % 100000, map.id);
   const view = createBattleView(scene, assets, battle);
 
   // Der gewaehlte Gegner uebernimmt die feindliche Fraktion: seine
@@ -304,10 +307,10 @@ function syncCampaign(): void {
  * Baut Szene und UI komplett neu auf: der Gegner ist eine andere
  * Persoenlichkeit, seine Truppen und sein Gehirn muessen frisch sein.
  */
-function restartAgainst(opponent: Personality, campaign: boolean): void {
+function restartAgainst(opponent: Personality, campaign: boolean, map: BattleMap): void {
   if (!assetsRef || !sceneRef || !rigRef) return;
   app = null;
-  startBattle(assetsRef, sceneRef, rigRef, opponent, campaign);
+  startBattle(assetsRef, sceneRef, rigRef, opponent, campaign, map);
 }
 
 /**
@@ -562,7 +565,7 @@ async function boot(): Promise<void> {
   const assets = await loadAssets();
   // Zuerst die Gegnerauswahl zeigen. Ohne Auswahl startet das Spiel gegen den
   // ersten Gegner, damit ein Klick weniger genuegt.
-  startBattle(assets, scene, rig, PERSONALITIES[0], false);
+  startBattle(assets, scene, rig, PERSONALITIES[0], false, MAPS[0]);
   app?.selector.show();
 
   const clock = new THREE.Clock();

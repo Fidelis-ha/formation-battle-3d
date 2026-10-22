@@ -96,6 +96,14 @@ export interface Structure {
   faction: Faction;
   x: number;
   z: number;
+  /**
+   * Uferpunkte eines Wellenbrechers.
+   *
+   * Ein Damm ist ein Streifen von Ufer zu Ufer, kein Kreis. Wegfindung und
+   * Bewegung pruefen beide diese Linie — sonst rechnet die Wegfindung durch
+   * eine Stelle, an der die Bewegung sperrt.
+   */
+  span?: { ax: number; az: number; bx: number; bz: number };
 }
 
 export interface Battle {
@@ -114,6 +122,9 @@ export interface Battle {
   resources: Record<Faction, number>;
   /** Gebaute Anlagen beider Seiten. */
   structures: Structure[];
+
+  /** Kennung der Karte, auf der gekaempft wird (siehe `maps.ts`). */
+  mapId: string;
 
   /** Fraktionen, die von einer KI-Persoenlichkeit gefuehrt werden. */
   aiControlled?: Faction[];

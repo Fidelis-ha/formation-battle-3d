@@ -1,15 +1,19 @@
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { mapById } from '../src/sim/maps';
 import {
   FIELD_HALF,
-  HILLS,
   MAX_CLIMB_SLOPE,
-  RIVER,
   WATER_LEVEL,
+  hillsOf,
+  setMap,
+  activeRiver,
   forestDensityAt,
   grassTufts,
   groundKindAt,
   heightAt,
   isForest,
+  riverHalfWidth,
+  riverBankWidth,
   isPassable,
   isWater,
   riverDistanceAt,
@@ -19,6 +23,13 @@ import {
 } from '../src/sim/terrain';
 
 describe('Hoehenkarte', () => {
+  // Diese Pruefungen gelten fuer eine Karte MIT Fluss und steilem Huegel.
+  // Seit es zehn Karten gibt, ist das eine bewusste Wahl und nicht mehr der
+  // einzige Zustand: "Offenes Feld" hat gar kein Wasser.
+  beforeEach(() => {
+    const map = mapById('shallow-ford');
+    if (map) setMap(map);
+  });
   it('liefert endliche, plausible Hoehen auf der ganzen Karte', () => {
     for (let x = -FIELD_HALF; x <= FIELD_HALF; x += 5) {
       for (let z = -FIELD_HALF; z <= FIELD_HALF; z += 5) {
@@ -31,7 +42,16 @@ describe('Hoehenkarte', () => {
   });
 
   it('der mittlere Huegel ist nur von einer Seite ersteigbar', () => {
-    const hill = HILLS[0];
+    // Auf "Die Hochebene" steht ein Huegel mit Rampe im Sueden und Klippe im
+    // Norden. Seit es zehn Karten gibt, hat nicht mehr jede Karte so einen
+    // Huegel — die Eigenart ist jetzt eine Eigenschaft der Karte.
+    const plateau = mapById('high-plateau');
+    expect(plateau).not.toBeNull();
+    if (!plateau) return;
+    setMap(plateau);
+    const hill = hillsOf().find((h) => h.climbFrom !== null);
+    expect(hill).toBeDefined();
+    if (!hill) return;
     expect(hill.climbFrom).not.toBeNull();
 
     // Suedseite (Klippe) und Nordseite (Aufstieg) vergleichen.
@@ -86,28 +106,36 @@ describe('Hoehenkarte', () => {
   });
 
   it('Huegel haben unterschiedliche Steigung', () => {
-    const slopes = HILLS.map((h) => {
+    // "Zwei Huegel" hat zwei steile und eine flache Senke — dort ist der
+    // Unterschied messbar. Auf einer Karte mit lauter gleich steilen Huegeln
+    // waere die Pruefung sinnlos.
+    const zwei = mapById('two-hills');
+    if (zwei) setMap(zwei);
+    const slopes = hillsOf().map((h) => {
       const x = h.x + h.radius * 0.4;
       const z = h.z;
       return slopeAt(x, z);
     });
     const min = Math.min(...slopes);
     const max = Math.max(...slopes);
-    console.log('Huegelsteigungen:', slopes.map((s) => s.toFixed(2)).join(', '));
+    console.log('Huegelsteigungen:', slopes.map((v: number) => v.toFixed(2)).join(', '));
     expect(max - min).toBeGreaterThan(0.3);
   });
 
-  it('der Fluss ist eine durchgehende Wasserrinne mit Ufer', () => {
+  it('der Fluss hat Wasser und Ufer, aber Furten unterbrechen ihn', () => {
     let waterSamples = 0;
     let bankSamples = 0;
+    let spaltenOhneWasser = 0;
     for (let x = -FIELD_HALF + 5; x < FIELD_HALF - 5; x += 3) {
-      // Der Fluss laeuft geschwungen: mindestens eine Stelle im Band
-      // muss pro x-Spalte Wasser sein.
+      // Der Fluss laeuft geschwungen. An einer Furt ist er absichtlich
+      // unterbrochen — genau dort kommt eine Armee hinueber. Frueher war hier
+      // eine durchgehende Rinne gefordert; die trennte die Karte in zwei
+      // Haelften, und die Armeen trafen sich nie.
       let hasWater = false;
       for (let z = -20; z <= 20; z += 1) {
         if (isWater(x, z)) hasWater = true;
       }
-      expect(hasWater).toBe(true);
+      if (!hasWater) spaltenOhneWasser++;
       for (let z = -20; z <= 20; z += 1) {
         if (isWater(x, z)) waterSamples++;
         const kind = groundKindAt(x, z);
@@ -198,8 +226,10 @@ describe('Begehbarkeit', () => {
     expect(isPassable(-70, 70)).toBe(true);
   });
 
-  it('die Klippe des mittleren Huegels ist nicht passierbar', () => {
-    const hill = HILLS[0];
+  it('die Klippe des Huegels ist nicht passierbar', () => {
+    const plateau = mapById('high-plateau');
+    if (plateau) setMap(plateau);
+    const hill = hillsOf()[0];
     const angle = (hill.climbFrom as number) + Math.PI;
     // Entlang des Klippenhangs nach einem gesperrten Punkt suchen.
     let blocked = false;

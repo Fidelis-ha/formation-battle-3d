@@ -9,6 +9,7 @@
  */
 
 import { PERSONALITIES, type Personality } from '../sim/ai/personality';
+import { MAPS, type BattleMap } from '../sim/maps';
 import { t, getLanguage } from './i18n';
 
 const STORAGE_KEY = 'fb.campaign';
@@ -22,9 +23,9 @@ export interface CampaignProgress {
 
 export interface SelectorHandlers {
   /** Ein einzelner Gegner wurde gewaehlt (freies Spiel). */
-  onPick(personality: Personality): void;
+  onPick(personality: Personality, map: BattleMap): void;
   /** Kampagne starten oder fortsetzen. */
-  onCampaign(personality: Personality, progress: CampaignProgress): void;
+  onCampaign(personality: Personality, progress: CampaignProgress, map: BattleMap): void;
 }
 
 export interface Selector {
@@ -73,6 +74,9 @@ function saveProgress(progress: CampaignProgress): void {
 
 export function createSelector(handlers: SelectorHandlers): Selector {
   let progress = loadProgress();
+  // Gewaehlte Karte. Bleibt ueber Gegnerwechsel erhalten — wer die Karte
+  // einmal gewaehlt hat, will nicht bei jedem Gegner neu waehlen.
+  let chosenMap: BattleMap = MAPS[0];
 
   const root = document.createElement('div');
   root.className = 'overlay overlay--selector';
@@ -111,6 +115,19 @@ export function createSelector(handlers: SelectorHandlers): Selector {
 
   campaignBox.append(campaignText, campaignButton, campaignReset);
 
+  // Kartenauswahl: eine Zeile mit Reitern, damit zehn Karten in ein Fenster
+  // passen, ohne die Gegnerliste zu verdraengen.
+  const mapBox = document.createElement('div');
+  mapBox.className = 'selector-maps';
+
+  const mapLabel = document.createElement('span');
+  mapLabel.className = 'selector-maps-label';
+  mapLabel.textContent = t('chooseMap');
+
+  const mapRow = document.createElement('div');
+  mapRow.className = 'selector-map-row';
+  mapBox.append(mapLabel, mapRow);
+
   const list = document.createElement('div');
   list.className = 'selector-list';
 
@@ -122,7 +139,7 @@ export function createSelector(handlers: SelectorHandlers): Selector {
     root.hidden = true;
   });
 
-  panel.append(title, subtitle, campaignBox, list, close);
+  panel.append(title, subtitle, mapBox, campaignBox, list, close);
   root.append(panel);
 
   /** Den Kampagnen-Kasten neu beschriften. */
@@ -135,7 +152,7 @@ export function createSelector(handlers: SelectorHandlers): Selector {
     campaignButton.disabled = next === undefined;
     campaignButton.onclick = () => {
       if (!next) return;
-      handlers.onCampaign(next, progress);
+      handlers.onCampaign(next, progress, chosenMap);
       root.hidden = true;
     };
   }
@@ -158,6 +175,58 @@ export function createSelector(handlers: SelectorHandlers): Selector {
       hammer: 'The Hammer',
       spider: 'The Spider',
       commander: 'The Commander',
+    };
+    return map[id] ?? id;
+  }
+
+  /** Die zehn Karten als Reiter aufbauen. */
+  function buildMaps(): void {
+    mapRow.innerHTML = '';
+    for (const map of MAPS) {
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'selector-map-chip';
+      chip.textContent = getLanguage() === 'de' ? map.name : englishMapName(map.id);
+      chip.title = getLanguage() === 'de' ? map.trait : englishMapTrait(map.id);
+      if (map.id === chosenMap.id) chip.classList.add('selector-map-chip--active');
+      chip.addEventListener('click', () => {
+        chosenMap = map;
+        buildMaps();
+      });
+      mapRow.append(chip);
+    }
+  }
+
+  /** Englische Kartennamen (die Daten bleiben deutsch). */
+  function englishMapName(id: string): string {
+    const map: Record<string, string> = {
+      'open-field': 'Open Field',
+      'shallow-ford': 'The Ford',
+      'two-hills': 'Two Hills',
+      'lake-pass': 'The Lake',
+      'forest-road': 'Forest Road',
+      'narrow-defile': 'The Defile',
+      crossing: 'The Crossing',
+      marshland: 'The Marsh',
+      island: 'The Island',
+      'high-plateau': 'The Plateau',
+    };
+    return map[id] ?? id;
+  }
+
+  /** Englische Eigenarten. */
+  function englishMapTrait(id: string): string {
+    const map: Record<string, string> = {
+      'open-field': 'No water. Two lines, open sight, nothing in the way.',
+      'shallow-ford': 'A narrow river across the field. Two fords, one of them tight.',
+      'two-hills': 'Two rises left and right, a hollow between them.',
+      'lake-pass': 'A lake in the middle. You go round left or right.',
+      'forest-road': 'Dense wood on both sides, one corridor down the middle.',
+      'narrow-defile': 'Rock walls left and right, a single narrow passage.',
+      crossing: 'East against west. The river runs lengthwise; the ford decides it.',
+      marshland: 'Broad marsh before the enemy line. The detour costs time.',
+      island: 'A ford leads onto an island in the middle. Hold it, hold the centre.',
+      'high-plateau': 'A rise with one ramp. Whoever stands on top shoots further.',
     };
     return map[id] ?? id;
   }
@@ -194,7 +263,7 @@ export function createSelector(handlers: SelectorHandlers): Selector {
       }
 
       card.addEventListener('click', () => {
-        handlers.onPick(p);
+        handlers.onPick(p, chosenMap);
         root.hidden = true;
       });
 
@@ -222,6 +291,7 @@ export function createSelector(handlers: SelectorHandlers): Selector {
   return {
     root,
     show() {
+      buildMaps();
       buildList();
       refreshCampaign();
       root.hidden = false;

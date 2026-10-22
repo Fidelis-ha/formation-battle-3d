@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import {
   FIELD_HALF,
-  RIVER,
   WATER_LEVEL,
+  activeRiver,
+  activeLakes,
   forestDensityAt,
   grassTufts,
   groundKindAt,
@@ -10,6 +11,7 @@ import {
   isBank,
   isWater,
   riverCenterAt,
+  riverHalfWidth,
   rockSpots,
   slopeAt,
   treeSpots,
@@ -128,33 +130,15 @@ function buildTerrainMesh(): THREE.Mesh {
   return mesh;
 }
 
-/** Wasserflaeche: folgt dem Flussverlauf als breites Band. */
+/**
+ * Wasserflaeche der aktiven Karte.
+ *
+ * Fluesse werden als Band entlang ihrer Mittellinie gebaut, Seen und
+ * Feuchtgebiete als Kreisflaechen. Vorher war hier ein einziger fester Fluss
+ * verdrahtet — bei zehn Karten mit eigenem Wasser geht das nicht mehr.
+ */
 function buildWaterMesh(): THREE.Group {
   const group = new THREE.Group();
-  const segmentsAlong = 220;
-
-  // Das Wasser wird als Band entlang der Flussmitte gebaut, nicht als
-  // Rechteck — sonst schwimmt es ueber die Ufer hinaus.
-  const verts: number[] = [];
-  const indices: number[] = [];
-  const half = RIVER.halfWidth + 1.2;
-
-  for (let i = 0; i <= segmentsAlong; i++) {
-    const x = -FIELD_HALF + (i / segmentsAlong) * FIELD_HALF * 2;
-    const cz = riverCenterAt(x);
-    verts.push(x, WATER_LEVEL + 0.12, cz - half);
-    verts.push(x, WATER_LEVEL + 0.12, cz + half);
-  }
-  for (let i = 0; i < segmentsAlong; i++) {
-    const a = i * 2;
-    indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
-  }
-
-  const geometry = new THREE.BufferGeometry();
-  geometry.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
-  geometry.setIndex(indices);
-  geometry.computeVertexNormals();
-
   const material = new THREE.MeshStandardMaterial({
     color: 0x5f8794,
     roughness: 0.18,
@@ -163,35 +147,50 @@ function buildWaterMesh(): THREE.Group {
     opacity: 0.86,
   });
 
-  const water = new THREE.Mesh(geometry, material);
-  water.receiveShadow = false;
-  group.add(water);
+  // Fluesse: Band entlang der Mittellinie.
+  const segmentsAlong = 220;
+  const river = activeRiver();
+  if (river) {
+    const half = river.halfWidth + 1.2;
+    const verts: number[] = [];
+    const indices: number[] = [];
+    const angle = river.angle ?? 0;
+    const ca = Math.cos(angle);
+    const sa = Math.sin(angle);
 
-  // Schaumkante an beiden Ufern: ein heller Streifen, der die Kante betont.
-  const foamMat = new THREE.MeshBasicMaterial({
-    color: 0xb8cdd4,
-    transparent: true,
-    opacity: 0.35,
-    side: THREE.DoubleSide,
-  });
-  for (const side of [-1, 1]) {
-    const fVerts: number[] = [];
-    const fIndices: number[] = [];
     for (let i = 0; i <= segmentsAlong; i++) {
-      const x = -FIELD_HALF + (i / segmentsAlong) * FIELD_HALF * 2;
-      const cz = riverCenterAt(x) + side * half;
-      fVerts.push(x, WATER_LEVEL + 0.14, cz);
-      fVerts.push(x, WATER_LEVEL + 0.14, cz + side * 0.9);
+      const u = -FIELD_HALF + (i / segmentsAlong) * FIELD_HALF * 2;
+      // Punkt auf der Mittellinie in Bandkoordinaten, dann zurueckdrehen.
+      const cx = u * ca;
+      const cz = u * sa + riverCenterAt(u);
+      // Querrichtung des Bandes.
+      const qx = -sa;
+      const qz = ca;
+      verts.push(cx + qx * -half, WATER_LEVEL + 0.12, cz + qz * -half);
+      verts.push(cx + qx * half, WATER_LEVEL + 0.12, cz + qz * half);
     }
     for (let i = 0; i < segmentsAlong; i++) {
       const a = i * 2;
-      fIndices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
+      indices.push(a, a + 1, a + 2, a + 1, a + 3, a + 2);
     }
-    const fGeo = new THREE.BufferGeometry();
-    fGeo.setAttribute('position', new THREE.Float32BufferAttribute(fVerts, 3));
-    fGeo.setIndex(fIndices);
-    fGeo.computeVertexNormals();
-    group.add(new THREE.Mesh(fGeo, foamMat));
+
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(verts, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    const water = new THREE.Mesh(geometry, material);
+    water.receiveShadow = false;
+    group.add(water);
+  }
+
+  // Seen und Feuchtgebiete: Kreisflaechen.
+  for (const lake of activeLakes()) {
+    const geometry = new THREE.CircleGeometry(lake.radius + 1.0, 48);
+    geometry.rotateX(-Math.PI / 2);
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.position.set(lake.x, WATER_LEVEL + 0.12, lake.z);
+    mesh.receiveShadow = false;
+    group.add(mesh);
   }
 
   return group;
@@ -326,11 +325,16 @@ export function buildLandscape(): LandscapeHandle {
   // Wasser
   const water = buildWaterMesh();
   group.add(water);
-  const waterMat = (water.children[0] as THREE.Mesh).material as THREE.MeshStandardMaterial;
+  // Karten ohne Wasser haben keine Wasserflaeche — dann gibt es auch kein
+  // Material zum Animieren.
+  const firstWater = water.children[0] as THREE.Mesh | undefined;
+  const waterMat = firstWater
+    ? (firstWater.material as THREE.MeshStandardMaterial)
+    : null;
   updaters.push((t) => {
     // Langsame, kaum sichtbare Bewegung: ein Versatz der Normalen sugeriert
     // Fliessen, ohne dass die Flaeche selbst verrutscht.
-    waterMat.roughness = 0.16 + Math.sin(t * 0.7) * 0.04;
+    if (waterMat) waterMat.roughness = 0.16 + Math.sin(t * 0.7) * 0.04;
   });
 
   // Baeume

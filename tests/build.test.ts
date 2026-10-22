@@ -57,13 +57,14 @@ describe('Bauphase', () => {
   });
 
   it('baut den Wellenbrecher nur im Wasser', () => {
-    const b = createBattle(7);
+    // Karte mit Fluss: auf "Offenes Feld" gibt es kein Wasser mehr.
+    const b = createBattle(7, 'shallow-ford');
     // Auf dem Trockenen scheitert es.
     expect(buildStructure(b, 'player', 'breakwater', -10, 30)).toBe('buildNeedsWater');
     // Im Fluss klappt es.
     let placed = false;
     for (let x = -60; x < 60 && !placed; x += 2) {
-      for (let z = -30; z < -8; z += 1) {
+      for (let z = -60; z < 60; z += 1) {
         if (!isWater(x, z)) continue;
         const err = buildStructure(b, 'player', 'breakwater', x, z);
         if (err === null) {
@@ -77,10 +78,10 @@ describe('Bauphase', () => {
   });
 
   it('baut keine Mauer ins Wasser', () => {
-    const b = createBattle(7);
+    const b = createBattle(7, 'shallow-ford');
     let waterSpot: { x: number; z: number } | null = null;
     for (let x = -60; x < 60 && !waterSpot; x += 2) {
-      for (let z = -30; z < -8; z += 1) {
+      for (let z = -60; z < 60; z += 1) {
         if (isWater(x, z)) {
           waterSpot = { x, z };
           break;

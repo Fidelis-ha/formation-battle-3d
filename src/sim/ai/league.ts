@@ -39,9 +39,11 @@ export function runMatch(
   a: Personality,
   b: Personality,
   seed: number,
-  options: { build?: boolean } = {},
+  options: { build?: boolean; mapId?: string } = {},
 ): MatchResult {
-  const battle: Battle = createBattle(seed);
+  // Ohne `mapId` wird auf der Standardkarte gekaempft. Fuer die Ligamessung ist
+  // das richtig: die Spieler sollen auf gleichem Gelaende verglichen werden.
+  const battle: Battle = createBattle(seed, options.mapId);
 
   // Bauphase ueberspringen: die Liga misst das Kaempfen, nicht das Bauen.
   // Ohne Start wuerde keine Schlacht beginnen (phase bleibt 'build').

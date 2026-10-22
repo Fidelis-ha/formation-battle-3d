@@ -9,7 +9,8 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview --host 127.0.0.1 --port 5184",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "test:full": "vitest run --config vitest.full.config.ts"
   },
   "dependencies": {
     "three": "^0.180.0"

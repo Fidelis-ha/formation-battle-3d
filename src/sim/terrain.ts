@@ -10,53 +10,31 @@
  * auseinanderlaufen.
  */
 
+import { MAPS, type BattleMap, type HillSpec, type WaterSpec } from './maps';
+
 export const FIELD_HALF = 90;
 export const SEED = 20261021;
 
-export type GroundKind = 'grass' | 'hill' | 'rock' | 'forest' | 'water' | 'bank';
+/**
+ * Die gerade aktive Karte.
+ *
+ * `setMap()` setzt sie; alles darunter rechnet gegen diese Karte. Vorher war
+ * das Gelaende fest verdrahtet (ein Fluss, fuenf Huegel) — jetzt ist es ein
+ * Datensatz aus `maps.ts`, und dieselben Funktionen gelten fuer alle zehn
+ * Karten.
+ */
+let activeMap: BattleMap = MAPS[0];
 
-/** Ein Hügel: Kegel mit eigener Hoehe, Radius und Neigung. */
-export interface HillSpec {
-  x: number;
-  z: number;
-  height: number;
-  radius: number;
-  /** Steilheit 0..1. 1 = steile Wand. */
-  steep: number;
-  /** Nur von dieser Richtung ersteigbar (0 = von Norden, PI = Sueden ...).
-   *  null = rundum gleich begehbar. */
-  climbFrom: number | null;
+export function setMap(map: BattleMap): void {
+  activeMap = map;
+  resetCaches();
 }
 
-/**
- * Die Huegel der Karte. Der mittlere Huegel ist der "nur von einer Seite"
- * ersteigbare: seine Suedseite ist eine Klippe, der Nordhang flach.
- */
-export const HILLS: HillSpec[] = [
-  { x: 0, z: -4, height: 11, radius: 21, steep: 0.85, climbFrom: Math.PI / 2 },
-  { x: -54, z: 26, height: 8, radius: 15, steep: 0.5, climbFrom: null },
-  { x: 52, z: 32, height: 10, radius: 16, steep: 0.62, climbFrom: null },
-  { x: 52, z: -2, height: 8, radius: 13, steep: 0.45, climbFrom: null },
-  { x: -52, z: -2, height: 9, radius: 14, steep: 0.55, climbFrom: null },
-];
+export function currentMap(): BattleMap {
+  return activeMap;
+}
 
-/**
- * Fluss: ein Band, das die Karte von West nach Ost durchzieht. Er wird nicht
- * als Polygongemalt, sondern als Funktion gerechnet — dadurch liegt das Wasser
- * immer genau in der Mulde, die die Hoehenkarte vorgibt.
- */
-export const RIVER = {
-  /** Mittellinie bei z = 0, leicht geschwungen. */
-  amplitude: 9,
-  frequency: 0.035,
-  /** Halbe Breite des Wasserbands. Schmales Band, damit es als Fluss und
-   *  nicht als See gelesen wird. */
-  halfWidth: 3.4,
-  /** Halbe Breite der Uferboeschung. Breit, damit das Ufer zum Huegelfuss
-   *  hin weich auslaeuft statt als Kante zu enden. */
-  bankWidth: 11,
-  depth: 1.6,
-};
+export type GroundKind = 'grass' | 'hill' | 'rock' | 'forest' | 'water' | 'bank';
 
 /** Zufall mit festem Startwert — gleiche Karte bei gleichem Seed. */
 function mulberry32(seed: number): () => number {
@@ -81,21 +59,101 @@ function noise2(x: number, z: number, seed: number): number {
   );
 }
 
-/** Mittellinie des Flusses an einer Stelle x. */
-export function riverCenterAt(x: number): number {
-  // Grundversatz nach Norden (-z), damit der Fluss nicht genau dort liegt, wo
-  // die Kamera hinsieht. Er laeuft hinter der gegnerischen Aufstellung.
-  const offset = -22;
-  return (
-    offset +
-    Math.sin(x * RIVER.frequency) * RIVER.amplitude +
-    Math.sin(x * 0.011 + 1.3) * RIVER.amplitude * 0.45
+/**
+ * Die Huegel der aktiven Karte.
+ *
+ * Vorher stand hier eine feste Liste mit fuenf Huegeln; jetzt kommt sie aus dem
+ * Kartendatensatz. `hillHeight` bleibt unveraendert und rechnet weiter mit
+ * einem HillSpec.
+ */
+export function hillsOf(): HillSpec[] {
+  return activeMap.hills;
+}
+
+/**
+ * Wasser der aktiven Karte.
+ *
+ * Der Fluss ist kein gemaltes Polygon, sondern eine Funktion: dadurch liegt das
+ * Wasser immer genau in der Mulde, die die Hoehenkarte vorgibt. Seen und
+ * Feuchtgebiete werden genauso gerechnet.
+ */
+function riversOf(): Extract<WaterSpec, { kind: 'river' }>[] {
+  return activeMap.water.filter((w): w is Extract<WaterSpec, { kind: 'river' }> => w.kind === 'river');
+}
+
+function lakesOf(): Extract<WaterSpec, { kind: 'lake' | 'marsh' }>[] {
+  return activeMap.water.filter(
+    (w): w is Extract<WaterSpec, { kind: 'lake' | 'marsh' }> => w.kind === 'lake' || w.kind === 'marsh',
   );
 }
 
-/** Wie weit ein Punkt vom Flussmittelpunkt entfernt ist (nur z-Abstand). */
+/**
+ * Liegt dieser Punkt in einer Furt des Flusses?
+ *
+ * Furten sind Unterbrechungen im Band. Dort steht kein Wasser und das Ufer
+ * faellt nicht ab — eine Armee kann hier trockenen Fusses hinueber.
+ */
+export function isFord(x: number, z: number): boolean {
+  const river = riversOf()[0];
+  if (!river?.gaps) return false;
+  const angle = river.angle ?? 0;
+  const rx = x * Math.cos(-angle) - z * Math.sin(-angle);
+  for (const gap of river.gaps) {
+    if (Math.abs(rx - gap.at) <= gap.width / 2) return true;
+  }
+  return false;
+}
+
+/** Abstand eines Punktes zur Mittellinie des ersten Flusses (nur quer). */
+export function riverCenterAt(x: number): number {
+  const river = riversOf()[0];
+  if (!river) return 1e6;
+  const angle = river.angle ?? 0;
+  // Bei gedrehtem Band laeuft die Mittellinie laengs einer anderen Achse.
+  const along = angle === 0 ? x : riverDistanceAlong(x);
+  return (
+    river.offset +
+    Math.sin(along * river.frequency) * river.amplitude +
+    Math.sin(along * 0.011 + 1.3) * river.amplitude * 0.45
+  );
+}
+
+/** Hilfsachse fuer ein gedrehtes Flussband. */
+function riverDistanceAlong(v: number): number {
+  return v;
+}
+
+/** Wie weit ein Punkt vom Flussmittelpunkt entfernt ist (quer). */
 export function riverDistanceAt(x: number, z: number): number {
-  return Math.abs(z - riverCenterAt(x));
+  const river = riversOf()[0];
+  if (!river) return 1e6;
+  const angle = river.angle ?? 0;
+  // Punkt in das Koordinatensystem des Bandes drehen.
+  const rx = x * Math.cos(-angle) - z * Math.sin(-angle);
+  const rz = x * Math.sin(-angle) + z * Math.cos(-angle);
+  const centre = river.offset + Math.sin(rx * river.frequency) * river.amplitude +
+    Math.sin(rx * 0.011 + 1.3) * river.amplitude * 0.45;
+  return Math.abs(rz - centre);
+}
+
+/** Der Fluss der aktiven Karte (oder null). */
+export function activeRiver(): Extract<WaterSpec, { kind: 'river' }> | null {
+  return riversOf()[0] ?? null;
+}
+
+/** Seen und Feuchtgebiete der aktiven Karte. */
+export function activeLakes(): Extract<WaterSpec, { kind: 'lake' | 'marsh' }>[] {
+  return lakesOf();
+}
+
+/** Halbe Breite des Flussbandes (0, wenn die Karte keinen Fluss hat). */
+export function riverHalfWidth(): number {
+  return riversOf()[0]?.halfWidth ?? 0;
+}
+
+/** Halbe Breite der Uferboeschung. */
+export function riverBankWidth(): number {
+  return riversOf()[0]?.bankWidth ?? 0;
 }
 
 /**
@@ -152,9 +210,10 @@ function hillHeight(hill: HillSpec, x: number, z: number): number {
  */
 function baseHeight(x: number, z: number): number {
   let h = 0;
-  for (const hill of HILLS) h += hillHeight(hill, x, z);
-  // Leichte Wellen ueber die ganze Karte, damit nichts flach wirkt.
-  h += noise2(x, z, SEED) * 1.15;
+  for (const hill of hillsOf()) h += hillHeight(hill, x, z);
+  // Leichte Wellen ueber die ganze Karte. Wie wellig, sagt die Karte selbst:
+  // ein offenes Feld ist ruhiger als ein Huegelland.
+  h += noise2(x, z, SEED) * 1.15 * activeMap.roughness;
   // Kartenrand leicht anheben: das Feld wirkt wie eine Lichtung im Wald.
   const edge = Math.max(Math.abs(x), Math.abs(z)) / FIELD_HALF;
   h += Math.pow(Math.max(0, edge - 0.72) / 0.28, 2) * 11;
@@ -162,31 +221,91 @@ function baseHeight(x: number, z: number): number {
 }
 
 /**
- * Endgueltige Bodenhoehe. Der Fluss schneidet eine Mulde ein: innen Wasser,
- * danach eine Boeschung, dann wieder normales Gelaende.
+ * Endgueltige Bodenhoehe.
+ *
+ * Wasser schneidet eine Mulde ein: innen Wasser, danach eine Boeschung, dann
+ * wieder normales Gelaende. Das gilt fuer Fluesse, Seen und Feuchtgebiete —
+ * alle drei sind dieselbe Rechnung mit anderer Form.
  */
 export function heightAt(x: number, z: number): number {
-  const ground = baseHeight(x, z);
-  const d = riverDistanceAt(x, z);
+  let h = baseHeight(x, z);
 
-  if (d > RIVER.halfWidth + RIVER.bankWidth) return ground;
-
-  // Der Fluss liegt als feste Rinne in der Karte: Das Bett liegt immer
-  // unter dem Wasserspiegel, egal wie hoch das Gelaende daneben ist. Vorher
-  // wurde das Bett relativ zum Gelaende gerechnet — ueber Huegeln lag das
-  // Wasser dann hoeher als der Spiegel und der Fluss verschwand.
-  const bed = WATER_LEVEL - RIVER.depth;
-  if (d <= RIVER.halfWidth) {
-    const t = d / RIVER.halfWidth;
-    return bed + Math.pow(t, 2) * RIVER.depth * 0.35;
+  // Fluss: Band mit Boeschung — ausser an einer Furt, dort bleibt das
+  // Gelaende stehen und der Fluss ist unterbrochen.
+  const river = riversOf()[0];
+  if (river && !isFord(x, z)) {
+    const d = riverDistanceAt(x, z);
+    if (d <= river.halfWidth + river.bankWidth) {
+      const bed = WATER_LEVEL - RIVER_DEPTH;
+      if (d <= river.halfWidth) {
+        const t = d / river.halfWidth;
+        h = bed + Math.pow(t, 2) * RIVER_DEPTH * 0.35;
+      } else {
+        const t = (d - river.halfWidth) / river.bankWidth;
+        const smooth = t * t * (3 - 2 * t);
+        h = bed + (h - bed) * smooth;
+      }
+    }
   }
 
-  // Boeschung: vom Wasserbett zurueck auf das Gelaende. Ist der Hang hoeher
-  // als ein flaches Ufer, bleibt der Uebergang trotzdem steil.
-  const t = (d - RIVER.halfWidth) / RIVER.bankWidth;
-  const smooth = t * t * (3 - 2 * t);
-  return bed + (ground - bed) * smooth;
+  // Seen und Feuchtgebiete: rund, mit Boeschung.
+  for (const water of lakesOf()) {
+    const d = Math.hypot(x - water.x, z - water.z);
+    if (d > water.radius + water.bankWidth) continue;
+    // Ein Feuchtgebiet liegt flacher: es ist ein Umweg, kein Abgrund.
+    const depth = water.kind === 'marsh' ? 0.35 : 1.6;
+    const bed = WATER_LEVEL - depth;
+    if (d <= water.radius) {
+      const t = d / water.radius;
+      h = Math.min(h, bed + Math.pow(t, 2) * depth * 0.35);
+    } else {
+      const t = (d - water.radius) / water.bankWidth;
+      const smooth = t * t * (3 - 2 * t);
+      h = Math.min(h, bed + (h - bed) * smooth);
+    }
+  }
+
+  // Trockenes Land darf nicht unter den Wasserspiegel rutschen. Das Rauschen
+  // allein reichte, um flaches Feld auf -0.8 zu druecken — gemessen lagen
+  // dadurch Startpunkte von Armeen im Wasser, auf Karten ohne jedes Gewaesser.
+  // Wo kein Wasserkorper ist, bleibt der Boden ueber dem Spiegel.
+  if (!inWaterBody(x, z) && !nearWaterBody(x, z)) h = Math.max(h, WATER_LEVEL + 0.25);
+
+  return h;
 }
+
+/**
+ * Liegt der Punkt in einem Wasserkorper ODER auf seiner Boeschung?
+ *
+ * Die Sicherung gegen Wasser muss auch das Ufer aussparen: sonst hebt sie die
+ * Flussrinne an und das Wasser verschwindet ganz.
+ */
+function nearWaterBody(x: number, z: number): boolean {
+  const river = riversOf()[0];
+  if (river && !isFord(x, z) && riverDistanceAt(x, z) <= river.halfWidth + river.bankWidth) return true;
+  for (const water of lakesOf()) {
+    if (Math.hypot(x - water.x, z - water.z) <= water.radius + water.bankWidth) return true;
+  }
+  return false;
+}
+
+/**
+ * Liegt der Punkt in einem Wasserkorper (Fluss ohne Furt, See, Feuchtgebiet)?
+ *
+ * Anders als `isWater` fragt das die FORM ab, nicht die Hoehe — dadurch ist es
+ * von der Hoehenrechnung unabhaengig und kann sie korrigieren.
+ */
+function inWaterBody(x: number, z: number): boolean {
+  const river = riversOf()[0];
+  if (river && !isFord(x, z) && riverDistanceAt(x, z) <= river.halfWidth) return true;
+  for (const water of lakesOf()) {
+    if (Math.hypot(x - water.x, z - water.z) <= water.radius) return true;
+  }
+  return false;
+}
+
+/** Tiefe eines Flussbetts. */
+const RIVER_DEPTH = 1.6;
 
 /** Steigung an einer Stelle (0 = flach, 1 = senkrecht), als Anstieg pro Meter. */
 export function slopeAt(x: number, z: number): number {
@@ -196,7 +315,7 @@ export function slopeAt(x: number, z: number): number {
   return Math.hypot(dx, dz);
 }
 
-/** Wasserstand: alles unter dieser Hoehe ist Fluss. */
+/** Wasserstand: alles unter dieser Hoehe ist Wasser. */
 export const WATER_LEVEL = -0.55;
 
 export function isWater(x: number, z: number): boolean {
@@ -204,13 +323,21 @@ export function isWater(x: number, z: number): boolean {
 }
 
 export function isRiverBand(x: number, z: number): boolean {
-  return riverDistanceAt(x, z) <= RIVER.halfWidth;
+  const river = riversOf()[0];
+  if (!river) return false;
+  return riverDistanceAt(x, z) <= river.halfWidth;
 }
 
 /** Boeschung: nah am Wasser, aber nicht im Wasser. */
 export function isBank(x: number, z: number): boolean {
-  const d = riverDistanceAt(x, z);
-  return heightAt(x, z) >= WATER_LEVEL && d <= RIVER.halfWidth + RIVER.bankWidth;
+  if (isWater(x, z)) return false;
+  const river = riversOf()[0];
+  if (river && riverDistanceAt(x, z) <= river.halfWidth + river.bankWidth) return true;
+  for (const water of lakesOf()) {
+    const d = Math.hypot(x - water.x, z - water.z);
+    if (d <= water.radius + water.bankWidth) return true;
+  }
+  return false;
 }
 
 /**
@@ -233,8 +360,16 @@ export function forestDensityAt(x: number, z: number): number {
   const flank = Math.max(0, (Math.abs(x) - 34) / 46);
   n += flank * 0.55;
   // Am Fluss entlang keine Baeume (Uferwiese).
-  const d = riverDistanceAt(x, z);
-  if (d < RIVER.halfWidth + RIVER.bankWidth + 3) n *= 0.15;
+  const river = riversOf()[0];
+  if (river && riverDistanceAt(x, z) < river.halfWidth + river.bankWidth + 3) n *= 0.15;
+  // Wald-Schwerpunkte der Karte: dort wird der Bestand dichter.
+  for (const wood of activeMap.woods) {
+    const dw = Math.hypot(x - wood.x, z - wood.z);
+    if (dw < wood.radius) {
+      const t = 1 - dw / wood.radius;
+      n = Math.max(n, wood.density * (0.55 + 0.45 * t));
+    }
+  }
   // Auf steilen Haengen und auf dem Huegelplateau keine dichten Bestaende.
   if (slopeAt(x, z) > 0.62) n *= 0.3;
   return Math.max(0, Math.min(1, n));

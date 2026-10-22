@@ -154,6 +154,7 @@ const TEXTS: Dict = {
   buildOnlyInPhase: { en: 'Building is over', de: 'Die Bauphase ist vorbei' },
   // Gegnerauswahl und Kampagne (#16)
   chooseOpponent: { en: 'Choose your opponent', de: 'Gegner waehlen' },
+  chooseMap: { en: 'Map', de: 'Karte' },
   chooseOpponentHint: {
     en: 'Ten commanders, each with their own habit. Pick one for a single battle, or run the campaign.',
     de: 'Zehn Befehlshaber, jeder mit eigener Eigenart. Einen fuer eine einzelne Schlacht waehlen, oder die Kampagne spielen.',

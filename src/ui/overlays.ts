@@ -404,7 +404,7 @@ export function createOverlays(handlers: OverlayHandlers): Overlays {
     resultPanel.classList.toggle('result-panel--victory', status === 'victory');
     resultPanel.classList.toggle('result-panel--defeat', status === 'defeat');
     resultTitle.textContent = status === 'victory' ? t('victory') : t('defeat');
-    resultTime.textContent = `Time: ${formatTime(seconds)}`;
+    resultTime.textContent = `${t('time')}: ${formatTime(seconds)}`;
     resultOverlay.hidden = false;
   }
 
